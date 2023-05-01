@@ -53,11 +53,16 @@ int main(int argc, char *argv[])
 	struct pantryfs_inode inode;
 	struct pantryfs_dir_entry dentry;
 
+	int NUM_INODES;
+
 	char *hello_contents = "Hello world!\n";
 	char buf[PFS_BLOCK_SIZE];
 
 	size_t len;
 	const char zeroes[PFS_BLOCK_SIZE] = { 0 };
+
+	//P1: names.txt contents
+	char *names_contents = "Alan Luo, Simon Burke, Riya Gupta";
 
 	if (argc != 2) {
 		printf("Usage: ./format_disk_as_pantryfs DEVICE_NAME.\n");
@@ -80,10 +85,14 @@ int main(int argc, char *argv[])
 	SETBIT(sb.free_inodes, 0);
 	SETBIT(sb.free_inodes, 1);
 	SETBIT(sb.free_inodes, 2); // P1: mark 'members' subdirectory inode
+	SETBIT(sb.free_inodes, 3); // P1: mark 'names.txt' file inode
 
 	SETBIT(sb.free_data_blocks, 0);
 	SETBIT(sb.free_data_blocks, 1);
 	SETBIT(sb.free_data_blocks, 2); // P1: mark 'members' subdirectory data block
+	SETBIT(sb.free_data_blocks, 3); // P1: mark 'names.txt' file data block
+
+	NUM_INODES = 3;
 
 	/* Write the superblock to the first block of the filesystem. */
 	ret = write(fd, (char *)&sb, sizeof(sb));
@@ -121,17 +130,27 @@ int main(int argc, char *argv[])
 	ret = write(fd, (char *) &inode, sizeof(inode));
 	passert(ret == sizeof(inode), "Write members subdirectory inode");
 
+	// Write inode for 'names.txt' file
+	inode_reset(&inode);
+	inode.nlink = 1;
+	inode.mode = S_IFREG | 0666;
+	inode.data_block_number = PANTRYFS_ROOT_DATABLOCK_NUMBER + 3;
+	inode.file_size = strlen(names_contents);
+
+	ret = write(fd, (char *) &inode, sizeof(inode));
+	passert(ret == sizeof(inode), "Write names.txt file inode");
+
 	/* end P1 inodes */
 
 	// AL: Write to data blocks: directory first, then hello.txt
 
 	// - Seek past inode table
 
-	ret = lseek(fd, PFS_BLOCK_SIZE - 3 * sizeof(struct pantryfs_inode),//P1:2->3
+	ret = lseek(fd, PFS_BLOCK_SIZE - (NUM_INODES + 1) * sizeof(struct pantryfs_inode),
 		SEEK_CUR);
 	passert(ret >= 0, "Seek past inode table");
 
-	// - Write dentries
+	// - Write dentries for root dir
 
 	dentry_reset(&dentry);
 	strncpy(dentry.filename, "hello.txt", sizeof(dentry.filename));
@@ -141,7 +160,7 @@ int main(int argc, char *argv[])
 	ret = write(fd, (char *) &dentry, sizeof(dentry));
 	passert(ret == sizeof(dentry), "Write dentry for hello.txt");
 
-	/* P1: Write dentries */
+	/* P1: Write dentries of {members, names.txt} into root dir */
 
 	// Write dentry for 'members' subdirectory
 	dentry_reset(&dentry);
@@ -163,6 +182,32 @@ int main(int argc, char *argv[])
 	strncpy(buf, hello_contents, sizeof(buf));
 	ret = write(fd, buf, sizeof(buf));
 	passert(ret == sizeof(buf), "Write hello.txt contents");
+
+	/* P1: write members and names.txt contents */
+
+	// Write members contents
+
+	// - Write dentry for 'names.txt' file in 'members' dir
+	dentry_reset(&dentry);
+	strncpy(dentry.filename, "names.txt", sizeof(dentry.filename));
+	dentry.active = 1;
+	dentry.inode_no = PANTRYFS_ROOT_INODE_NUMBER + 3;
+
+	ret = write(fd, (char *) &dentry, sizeof(dentry));
+	passert(ret == sizeof(dentry), "Write dentry for names.txt");
+
+	// - Pad to end of members dentries
+	len = PFS_BLOCK_SIZE - sizeof(struct pantryfs_dir_entry);
+	ret = write(fd, zeroes, len);
+	passert(ret == len, "Pad to end of members dentries");
+
+
+	// Write names.txt contents
+	strncpy(buf, names_contents, sizeof(buf));
+	ret = write(fd, buf, sizeof(buf));
+	passert(ret == sizeof(buf), "Write names.txt contents");
+
+	/* end P1 write */
 
 	ret = fsync(fd);
 	passert(ret == 0, "Flush writes to disk");
