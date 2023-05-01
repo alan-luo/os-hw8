@@ -1,10 +1,7 @@
-This file should contain:
+* Alan Luo (al3856)
+* Riya Gupta (rg3407)
+* Simon Burke (srb2226)
 
--	Your name & UNI (or those of all group members for group assignments)
--	Homework assignment number
--	Description for each part
+HW 8 - Pantry
 
-The description should indicate whether your solution for the part is working
-or not. You may also want to include anything else you would like to
-communicate to the grader, such as extra functionality you implemented or how
-you tried to fix your non-working code.
+Part 1

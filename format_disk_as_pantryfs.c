@@ -79,9 +79,11 @@ int main(int argc, char *argv[])
 	 */
 	SETBIT(sb.free_inodes, 0);
 	SETBIT(sb.free_inodes, 1);
+	SETBIT(sb.free_inodes, 2); // P1: mark 'members' subdirectory inode
 
 	SETBIT(sb.free_data_blocks, 0);
 	SETBIT(sb.free_data_blocks, 1);
+	SETBIT(sb.free_data_blocks, 2); // P1: mark 'members' subdirectory data block
 
 	/* Write the superblock to the first block of the filesystem. */
 	ret = write(fd, (char *)&sb, sizeof(sb));
@@ -107,9 +109,29 @@ int main(int argc, char *argv[])
 	ret = write(fd, (char *) &inode, sizeof(inode));
 	passert(ret == sizeof(inode), "Write hello.txt inode");
 
-	ret = lseek(fd, PFS_BLOCK_SIZE - 2 * sizeof(struct pantryfs_inode),
+	/* P1: Write inodes */
+
+	// Write inode for 'members' subdirectory
+	inode_reset(&inode);
+	inode.nlink = 2; // new directories have two links: . and link from parent
+	inode.mode = S_IFDIR | 0777;
+	inode.data_block_number = PANTRYFS_ROOT_DATABLOCK_NUMBER + 2;
+	inode.file_size = PFS_BLOCK_SIZE; // directories use the entire block
+
+	ret = write(fd, (char *) &inode, sizeof(inode));
+	passert(ret == sizeof(inode), "Write members subdirectory inode");
+
+	/* end P1 inodes */
+
+	// AL: Write to data blocks: directory first, then hello.txt
+
+	// - Seek past inode table
+
+	ret = lseek(fd, PFS_BLOCK_SIZE - 3 * sizeof(struct pantryfs_inode),//P1:2->3
 		SEEK_CUR);
 	passert(ret >= 0, "Seek past inode table");
+
+	// - Write dentries
 
 	dentry_reset(&dentry);
 	strncpy(dentry.filename, "hello.txt", sizeof(dentry.filename));
@@ -119,9 +141,24 @@ int main(int argc, char *argv[])
 	ret = write(fd, (char *) &dentry, sizeof(dentry));
 	passert(ret == sizeof(dentry), "Write dentry for hello.txt");
 
-	len = PFS_BLOCK_SIZE - sizeof(struct pantryfs_dir_entry);
+	/* P1: Write dentries */
+
+	// Write dentry for 'members' subdirectory
+	dentry_reset(&dentry);
+	strncpy(dentry.filename, "members", sizeof(dentry.filename));
+	dentry.active = 1;
+	dentry.inode_no = PANTRYFS_ROOT_INODE_NUMBER + 2;
+
+	ret = write(fd, (char *) &dentry, sizeof(dentry));
+	passert(ret == sizeof(dentry), "Write dentry for members subdirectory");
+
+	/* end P1 dentries */
+
+	len = PFS_BLOCK_SIZE - 2 * sizeof(struct pantryfs_dir_entry); // P1: 1->2
 	ret = write(fd, zeroes, len);
 	passert(ret == len, "Pad to end of root dentries");
+
+	// - Write hello.txt contents
 
 	strncpy(buf, hello_contents, sizeof(buf));
 	ret = write(fd, buf, sizeof(buf));
