@@ -222,7 +222,46 @@ int pantryfs_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 
 ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, loff_t *ppos)
 {
-	return -EPERM;
+	// basic
+	ssize_t ret = 0;
+	// read inode data block
+	struct inode *inode;
+	struct buffer_head *bh;
+	// write from user buffer
+	size_t amt_to_write;
+
+	/* check if arguments are valid */
+
+	/* get inode # from file pointer */
+	inode = file_inode(filp);
+
+	/* read data block corresponding to inode */
+	bh = sb_bread(inode->i_sb, PFS_datablock_no_from_inode(inode));
+	if (!bh) {
+		pr_err("Could not read file datablock");
+		ret = -EIO;
+		goto write_end;
+	}
+
+	/* copy from user buf to data block */
+	if (len + *ppos > PFS_BLOCK_SIZE)
+		amt_to_write = PFS_BLOCK_SIZE - *ppos;
+	else
+		amt_to_write = len;
+
+	if(copy_from_user(bh->b_data + *ppos, buf, amt_to_write)) {
+		pr_err("copy_from_user failed");
+		ret = -EFAULT;
+		goto write_release;
+	}
+	mark_buffer_dirty(bh);
+
+	ret = amt_to_write;
+
+write_release:
+	brelse(bh);
+write_end:
+	return ret;
 }
 
 
