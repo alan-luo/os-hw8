@@ -260,7 +260,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	dir_dentry_pfs_inode = (struct pantryfs_inode *) 
 		(istore_bh->b_data + (dir_dentry->inode_no - 1) * sizeof(struct pantryfs_inode));
 	// if(!root_inode)...
-	if (!(root_inode->i_state & NEW)) {
+	if (!(dir_dentry_inode->i_state & I_NEW)) {
 		dir_dentry_inode->i_ino = dir_dentry->inode_no;
 		dir_dentry_inode->i_op = &pantryfs_inode_ops;	
 		dir_dentry_inode->i_mode = dir_dentry_pfs_inode->mode;
