@@ -213,8 +213,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 
 	// - read PFS inode entry from inode #
 	pfs_parent_inode = (struct pantryfs_inode *) 
-		istore_bh->b_data + parent->i_ino * sizeof(struct pantryfs_inode);
-
+		(istore_bh->b_data + (parent->i_ino - 1) * sizeof(struct pantryfs_inode));
 	/* read directory block from disk */
 	pardir_bh = sb_bread(sb, pfs_parent_inode->data_block_number);
 	if (!pardir_bh) {
@@ -235,13 +234,13 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		if (!pfs_dentry->active)
 			continue;
 		pr_info("active");
+		pr_info("%s", pfs_dentry->filename);
+		pr_info("%s", child_dentry->d_name.name);
 
 		// if we found a match
 		if(!strncmp(pfs_dentry->filename, child_dentry->d_name.name, 
 				PANTRYFS_FILENAME_BUF_SIZE)) {
-			pr_info("Found a match:")
-			pr_info("%s", pfs_dentry->filename);
-			pr_info("%s", child_dentry->d_name.name);
+			pr_info("Found a match:");
 
 			dir_dentry = pfs_dentry;
 			break;	
