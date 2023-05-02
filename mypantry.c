@@ -266,22 +266,28 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 {
 	// basic
 	ssize_t ret = 0;
+	int isappend = 0;
 	// read inode data block
 	struct inode *inode;
 	struct buffer_head *bh;
 	// write from user buffer
 	size_t amt_to_write;
 
+	/* get inode # from file pointer */
+	inode = file_inode(filp);
+
 	/* check if arguments are valid */
-	if (*ppos == PFS_BLOCK_SIZE)
-		return 0;
-	else if (*ppos > PFS_BLOCK_SIZE) {
-		pr_err("Offset larger than 4096 bytes (block size)");
+	if (*ppos > inode->i_size) {
+		pr_err("Offset larger than file size");
 		return -EINVAL;
 	}
 
-	/* get inode # from file pointer */
-	inode = file_inode(filp);
+	/* check for O_APPEND flag */
+	isappend = filp->f_flags & O_APPEND;
+	pr_info("append: %d", isappend);
+
+	if (isappend)
+		*ppos = inode->i_size;
 
 	/* read data block corresponding to inode */
 	bh = sb_bread(inode->i_sb, PFS_datablock_no_from_inode(inode));
