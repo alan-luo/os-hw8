@@ -14,8 +14,8 @@
 
 #define PFS_DENTRY_SIZE sizeof(struct pantryfs_dir_entry)
 
-uint64_t datablock_no_from_inode(struct inode *inode) {
-	return PANTRYFS_ROOT_DATABLOCK_NUMBER + (dir_inode->i_ino - 1);
+uint64_t PFS_datablock_no_from_inode(struct inode *inode) {
+	return PANTRYFS_ROOT_DATABLOCK_NUMBER + (inode->i_ino - 1);
 }
 
 /* P3: implement `iterate()` */
@@ -49,7 +49,7 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 
 	/* read the root dir inode from disk */
 	sb = dir_inode->i_sb;
-	bh = sb_bread(sb, datablock_no_from_inode(dir_inode));
+	bh = sb_bread(sb, PFS_datablock_no_from_inode(dir_inode));
 	if (!bh) {
 		pr_err("Could not read dir block");
 		ret = -EIO;
@@ -92,21 +92,48 @@ ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len, loff_t *p
 	// read inode data block
 	struct inode *inode;
 	struct buffer_head *bh;
+	size_t amt_to_read;
+
+	/* check if offset is valid */
+	if (*offset == PFS_BLOCK_SIZE)
+		return 0;
+	else if (*offset > PFS_BLOCK_SIZE) {
+		pr_info("Offset larger than 4096 bytes (block size)");
+		return -EINVAL;
+	}
 
 	/* get inode # from file pointer */
 	inode = file_inode(filp);
 
 	/* read data block corresponding to inode */
-	sb_bread(inode->sb, datablock_no_from_inode(dir_inode));
-
-	return -EFAULT;
+	bh = sb_bread(inode->i_sb, PFS_datablock_no_from_inode(inode));
+	if (!bh) {
+		pr_err("Could not read file datablock");
+		ret = -EIO;
+		goto read_end;
+	}
 
 	/* copy data from data block */
-	// if (copy_to_user(buf, + *offset, len))
-	// 	return -EFAULT;
+	if (len + *offset > PFS_BLOCK_SIZE)
+		amt_to_read = PFS_BLOCK_SIZE - *offset;
+	else
+		amt_to_read = len;
 
-	// *offset	+= len;
-	// return len;
+
+	if (copy_to_user(buf, bh->b_data + *offset, amt_to_read)) {
+		pr_err("Copy_to_user failed");
+		ret = -EFAULT;
+		goto read_release;
+	}
+
+	*offset	+= amt_to_read;
+	ret = amt_to_read;
+
+
+read_release:
+	brelse(bh);
+read_end:
+	return ret;
 }
 
 loff_t pantryfs_llseek(struct file *filp, loff_t offset, int whence)
