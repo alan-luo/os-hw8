@@ -81,6 +81,7 @@ struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantry
 	return inode;
 }
 
+// Remove inode from disk: unset the bit vector, remove from i store
 void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, struct inode *inode) {
 	unsigned long ino = inode->i_ino;
 	struct pantryfs_super_block *pantry_sb;
@@ -299,41 +300,16 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 		pr_err("Could not find a free inode or data block!");
 		goto create_end;
 	}
-
-	// mark inode and datablock entries as used
-	SETBIT(pantry_sb->free_inodes, new_ino_no);
-	SETBIT(pantry_sb->free_data_blocks, new_db_no);
-
 	pr_info("Found this empty inode: %lu", new_ino_no);
 	pr_info("Found this data block: %lu", new_db_no);
 
-	mark_buffer_dirty(buf_heads.sb_bh);
-	sync_dirty_buffer(buf_heads.sb_bh);
-
-	/* 2. Open inode block and write new file inode information to it */
+	/* 2. Open inode block*/
 	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
 	if (!buf_heads.i_store_bh) {
 		pr_err("Could not read i store block");
 		ret = -EIO;
 		goto create_release;
 	}
-
-	pfs_new_inode = PFS_inode_from_istore(buf_heads.i_store_bh, new_ino_no);
-
-	pfs_new_inode->nlink = 1;
-	pfs_new_inode->mode = S_IFREG | 0666;
-	pfs_new_inode->data_block_number = new_db_no;
-	pfs_new_inode->file_size = 0;
-
-	pfs_new_inode->uid = parent->i_uid.val;
-	pfs_new_inode->gid = parent->i_gid.val;
-
-	pfs_new_inode->i_atime = current_time(parent);
-	pfs_new_inode->i_mtime = pfs_new_inode->i_atime;
-	pfs_new_inode->i_ctime = pfs_new_inode->i_atime;
-
-	mark_buffer_dirty(buf_heads.i_store_bh);
-	sync_dirty_buffer(buf_heads.i_store_bh);
 
 	/* 3. Open data block for parent and add dentry */
 	par_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, parent));
@@ -352,6 +328,36 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 		pr_err("Could not find a free dentry");
 		goto create_release_3;
 	}
+
+	/* 4. Now, write out all information */
+
+	// write sb - mark inode and datablock entries as used
+	SETBIT(pantry_sb->free_inodes, new_ino_no);
+	SETBIT(pantry_sb->free_data_blocks, new_db_no);
+
+	mark_buffer_dirty(buf_heads.sb_bh);
+	sync_dirty_buffer(buf_heads.sb_bh);
+
+	// write istore
+	pfs_new_inode = PFS_inode_from_istore(buf_heads.i_store_bh, new_ino_no);
+
+	pfs_new_inode->nlink = 1;
+	pfs_new_inode->mode = S_IFREG | 0666;
+	pfs_new_inode->data_block_number = new_db_no;
+	pfs_new_inode->file_size = 0;
+
+	pfs_new_inode->uid = parent->i_uid.val;
+	pfs_new_inode->gid = parent->i_gid.val;
+
+	pfs_new_inode->i_atime = current_time(parent);
+	pfs_new_inode->i_mtime = pfs_new_inode->i_atime;
+	pfs_new_inode->i_ctime = pfs_new_inode->i_atime;
+
+	mark_buffer_dirty(buf_heads.i_store_bh);
+	sync_dirty_buffer(buf_heads.i_store_bh);
+
+	// write dentry
+
 	pfs_dentry->inode_no = new_ino_no;
 	pfs_dentry->active = 1;
 	strncpy(pfs_dentry->filename, dentry->d_name.name, sizeof(pfs_dentry->filename));
@@ -386,6 +392,8 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 	struct inode *dentry_inode = dentry->d_inode;
 	struct pantryfs_inode *dentry_pfs_inode;
 
+	pr_info("unlinking: %lu", dentry->d_inode->i_ino);
+	pr_info("parent: %lu", dir->i_ino);
 
 	/* read istore block */
 	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
@@ -500,6 +508,9 @@ void pantryfs_evict_inode(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct pantryfs_sb_buffer_heads buf_heads;
+
+	pr_info("evicting: %lu", inode->i_ino);
+
 	// <------ begin TA code ----->
 	/* Required to be called by VFS. If not called, evict() will BUG out.*/
 	truncate_inode_pages_final(&inode->i_data);
