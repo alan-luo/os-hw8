@@ -40,15 +40,20 @@ struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantry
 
 	// set this particular inode's values
 	inode->i_ino = ino;
+	if (isroot)
+		inode->i_mode = 0777 | S_IFDIR; // make root drwx-rwx-rwx
+	else
+		inode->i_mode = le64_to_cpu(pfs_inode->mode);
+
 	set_nlink(inode, pfs_inode->nlink);
+	i_uid_write(inode, le64_to_cpu(pfs_inode->uid));
+	i_gid_write(inode, le64_to_cpu(pfs_inode->gid));
 
 	if (pfs_inode->mode & S_IFDIR || isroot) {
 		inode->i_fop = &pantryfs_dir_ops;
-		inode->i_mode = 0777 | S_IFDIR; // make root drwx-rwx-rwx
-		inode->i_size = BLOCK_SIZE;
+		inode->i_size = PFS_BLOCK_SIZE;
 	} else {
 		inode->i_fop = &pantryfs_file_ops;
-		inode->i_mode = 0666 | S_IFREG;
 		inode->i_size = pfs_inode->file_size;
 	}
 
