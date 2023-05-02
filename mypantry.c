@@ -901,9 +901,47 @@ mkdir_end:
 	return ret;
 }
 
+/* P10 rmdir */
 int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 {
-	return -EPERM;
+	int ret = 0;
+	struct super_block *sb = dir->i_sb;
+	struct buffer_head *bh;
+	struct buffer_head *istore_bh;
+	int i;
+	struct pantryfs_dir_entry *pfs_dentry;
+
+
+	/* get istore */
+	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!istore_bh) {
+		pr_err("Could not read i store block");
+		return -EIO;
+	}
+
+	/* if the directory is not empty, fail */	
+	if (dir->i_nlink > 2)
+		return -ENOTEMPTY;
+	bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, dir));
+	if (!bh) {
+		pr_err("Could not read from data block");
+		return -EIO;
+		goto rmdir_release;
+	}
+	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
+		pfs_dentry = PFS_dentry_from_dirblock(bh, i);
+		if (pfs_dentry->active)
+			return -ENOTEMPTY;
+	}
+	
+	brelse(bh);
+rmdir_release:
+	brelse(istore_bh);
+
+	if (ret != 0)
+		return ret;
+	/* otherwise just use unlink */
+	return pantryfs_unlink(dir, dentry);
 }
 
 int pantryfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *dentry)
