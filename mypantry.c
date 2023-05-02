@@ -198,9 +198,88 @@ loff_t pantryfs_llseek(struct file *filp, loff_t offset, int whence)
 	return generic_file_llseek(filp, offset, whence);
 }
 
+/* P8: create files */
 int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, bool excl)
 {
-	return -EPERM;
+	// basic	
+	int ret = 0;
+	struct super_block *sb = parent->i_sb;
+	struct pantryfs_sb_buffer_heads buf_heads;
+	// for reading super block
+	struct pantryfs_super_block *pantry_sb;
+	// new inode info
+	int new_ino_no, new_db_no;
+	struct pantryfs_inode *pfs_new_inode;
+
+	/* 1. Open super block and tell it that a new file and inode have been created */
+	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+	if (!buf_heads.sb_bh) {
+		pr_err("Could not read super block");
+		ret = -EIO;
+		goto create_end;
+	}
+
+	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
+
+	// find a free inode
+	for (new_ino_no = 0; new_ino_no < PFS_MAX_INODES; new_ino_no++) {
+		if (!IS_SET(pantry_sb->free_inodes, new_ino_no))
+			break;
+	}
+
+	// find a data block inode
+	for (new_db_no = 0; new_db_no < PFS_MAX_INODES; new_db_no++) {
+		if (!IS_SET(pantry_sb->free_data_blocks, new_db_no))
+			break;
+	}
+
+	if (new_ino_no == PFS_MAX_INODES || new_db_no == PFS_MAX_INODES) {
+		pr_err("Could not find a free inode or data block!");
+		goto create_end;
+	}
+
+	// mark inode and datablock entries as used
+	SETBIT(pantry_sb->free_inodes, new_ino_no);
+	SETBIT(pantry_sb->free_data_blocks, new_ino_no);
+
+	mark_buffer_dirty(buf_heads.sb_bh);
+	sync_dirty_buffer(buf_heads.sb_bh);
+
+	/* 2. Open inode block and write new file inode information to it */
+	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!buf_heads.i_store_bh) {
+		pr_err("Could not read i store block");
+		ret = -EIO;
+		goto create_release;
+	}
+
+	pfs_new_inode = PFS_inode_from_istore(buf_heads.i_store_bh, new_ino_no);
+
+	pfs_new_inode->nlink = 1;
+	pfs_new_inode->mode = S_IFREG | 0666;
+	pfs_new_inode->data_block_number = new_db_no;
+	pfs_new_inode->file_size = 0;
+
+	pfs_new_inode->uid = parent->i_uid.val;
+	pfs_new_inode->gid = parent->i_gid.val;
+
+	pfs_new_inode->i_atime = current_time(parent);
+	pfs_new_inode->i_mtime = pfs_new_inode->i_atime;
+	pfs_new_inode->i_ctime = pfs_new_inode->i_atime;
+
+	mark_buffer_dirty(buf_heads.i_store_bh);
+	sync_dirty_buffer(buf_heads.i_store_bh);
+
+
+	/* 3. Open data block for newly_created file and zero it out */
+
+
+
+	brelse(buf_heads.i_store_bh);
+create_release:
+	brelse(buf_heads.sb_bh);
+create_end:
+	return ret;
 }
 
 int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
