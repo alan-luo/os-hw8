@@ -81,6 +81,31 @@ struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantry
 	return inode;
 }
 
+void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, struct inode *inode) {
+	unsigned long ino = inode->i_ino;
+	struct pantryfs_super_block *pantry_sb;
+	unsigned long db_no;
+	struct pantryfs_inode *pfs_inode;
+
+	db_no = PFS_datablock_no_from_inode(istore_bh, inode);
+
+	// Unset bit vectors in sb
+	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
+
+	CLEARBIT(pantry_sb->free_inodes, ino);
+	CLEARBIT(pantry_sb->free_inodes, db_no);
+
+	mark_buffer_dirty(sb_bh);
+	sync_dirty_buffer(sb_bh);
+
+	// Clear out old entry in istore
+	pfs_inode = PFS_inode_from_istore(istore_bh, ino);
+	memset((char *) pfs_inode, 0, PFS_INODE_SIZE);
+
+	mark_buffer_dirty(istore_bh);
+	sync_dirty_buffer(istore_bh);
+}
+
 /* P3: implement `iterate()` */
 int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 {
@@ -263,14 +288,12 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 		if (!IS_SET(pantry_sb->free_inodes, new_ino_no))
 			break;
 	}
-	pr_info("found a free inode: %d", new_ino_no);
 
 	// find a data block inode
 	for (new_db_no = 0; new_db_no < PFS_MAX_INODES; new_db_no++) {
 		if (!IS_SET(pantry_sb->free_data_blocks, new_db_no))
 			break;
 	}
-	pr_info("found a free datablock: %d", new_db_no);
 
 	if (new_ino_no == PFS_MAX_INODES || new_db_no == PFS_MAX_INODES) {
 		pr_err("Could not find a free inode or data block!");
@@ -279,7 +302,7 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 
 	// mark inode and datablock entries as used
 	SETBIT(pantry_sb->free_inodes, new_ino_no);
-	SETBIT(pantry_sb->free_data_blocks, new_ino_no);
+	SETBIT(pantry_sb->free_data_blocks, new_db_no);
 
 	mark_buffer_dirty(buf_heads.sb_bh);
 	sync_dirty_buffer(buf_heads.sb_bh);
@@ -345,9 +368,89 @@ create_end:
 	return ret;
 }
 
+/* P9: remove dentry and decrement link count */
 int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 {
-	return -EPERM;
+	int ret = 0;
+	struct super_block *sb = dir->i_sb;
+	// read istore and data blocks
+	struct buffer_head *sb_bh;
+	struct buffer_head *istore_bh;
+	struct buffer_head *dir_bh;
+	// remove dentry
+	int i;
+	struct pantryfs_dir_entry *pfs_dentry;
+	// update links
+	struct inode *dentry_inode = dentry->d_inode;
+	struct inode *dentry_pfs_inode;
+
+
+	/* read istore block */
+	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!istore_bh) {
+		pr_err("Could not read from inode store");
+		ret = -EIO;
+		goto unlink_end;
+	}
+
+	/* read dir data block */
+	dir_bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, dir));
+	if (!dir_bh) {
+		pr_err("Could not read parent dir datablock");
+		ret = -EIO;
+		goto unlink_release;
+	}
+
+	/* update dentry within dir data block */
+	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
+		pfs_dentry = PFS_dentry_from_dirblock(dir_bh, i);
+		if (!strcmp(pfs_dentry->filename, dentry->d_name.name))
+			break;
+	}
+	if (i == PFS_MAX_CHILDREN) {
+		pr_err("Wasn't able to find a matching dentry!");
+		ret = -EFAULT;
+		goto unlink_release_2;
+	}
+
+	memset((char *) pfs_dentry, 0, PFS_DENTRY_SIZE);
+
+	mark_buffer_dirty(dir_bh);
+	sync_dirty_buffer(dir_bh);
+
+	/* update inode nlinks */
+
+	// first change the node itself
+	drop_nlink(dentry_inode);
+	mark_inode_dirty(dentry_inode);
+
+	// now write to the inode store
+	dentry_pfs_inode = PFS_inode_from_istore(dir_bh, dentry_inode->i_ino);
+	dentry_pfs_inode->nlinks--;
+
+	mark_buffer_dirty(istore_bh);
+	sync_dirty_buffer(istore_bh);
+
+	/* if inode nlinks is zero, do a hard delete (write to relevant blocks) */
+	if (dentry_inode->i_nlink != 0)
+		goto unlink_release_2;
+
+	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+	if (!buf_heads.sb_bh) {
+		pr_err("Could not read super block");
+		ret = -EIO;
+		goto unlink_release_3;
+	}
+	PFS_remove_inode(sb_bh, istore_bh, dentry_inode);
+
+unlink_release_3:
+	brelse(sb_bh);
+unlink_release_2:
+	brelse(dir_bh);
+unlink_release:
+	brelse(istore_bh);
+unlink_end:
+	return ret;
 }
 
 /* P7: write_inode back to disk */
@@ -390,11 +493,16 @@ write_inode_end:
 	return ret;
 }
 
+/* P9 */
 void pantryfs_evict_inode(struct inode *inode)
 {
+	// <------ begin TA code ----->
 	/* Required to be called by VFS. If not called, evict() will BUG out.*/
 	truncate_inode_pages_final(&inode->i_data);
 	clear_inode(inode);
+	// </------ end TA code ----->
+
+	// PFS_remove_inode(sb_bh, istore_bh, dentry_inode);
 }
 
 /* P7: implement fsync */
