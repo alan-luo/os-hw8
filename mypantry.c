@@ -59,7 +59,7 @@ struct i_db_no PFS_get_free_i_db_no(struct buffer_head *sb_bh) {
 	// find a data block inode
 	for (i = 0; i < PFS_MAX_INODES; i++) {
 		if (!IS_SET(pantry_sb->free_data_blocks, i)) {
-			ret.db_no = i;
+			ret.db_no = i+1; // inode 1 is datablock 2
 			break;
 		}
 	}
@@ -224,6 +224,7 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 		if (!pfs_dentry->active)
 			continue;
 
+		pr_info("%s #%lu: block %u", pfs_dentry->filename, pfs_dentry->inode_no, PFS_inode_from_istore(istore_bh, pfs_dentry->inode_no)->data_block_number);
 		res = dir_emit(ctx, pfs_dentry->filename, 2 * PANTRYFS_FILENAME_BUF_SIZE,
 			pfs_dentry->inode_no, S_DT(dir_inode->i_mode));
 		if (!res)
@@ -380,7 +381,7 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	// write sb - mark inode and datablock entries as used
 	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
 	SETBIT(pantry_sb->free_inodes, new_i_db_no.i_no);
-	SETBIT(pantry_sb->free_data_blocks, new_i_db_no.db_no);
+	SETBIT(pantry_sb->free_data_blocks, new_i_db_no.db_no - 1);
 
 	mark_buffer_dirty(buf_heads.sb_bh);
 	sync_dirty_buffer(buf_heads.sb_bh);
@@ -843,7 +844,7 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	// write sb - mark inode and datablock entries as used
 	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
 	SETBIT(pantry_sb->free_inodes, new_i_db_no.i_no);
-	SETBIT(pantry_sb->free_data_blocks, new_i_db_no.db_no);
+	SETBIT(pantry_sb->free_data_blocks, new_i_db_no.db_no - 1); // need to subtract 1 bc datablocks are offset
 
 	mark_buffer_dirty(buf_heads.sb_bh);
 	sync_dirty_buffer(buf_heads.sb_bh);
@@ -910,6 +911,7 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 	struct buffer_head *istore_bh;
 	int i;
 	struct pantryfs_dir_entry *pfs_dentry;
+	struct inode *dentry_inode;
 
 	int n_active = 0;
 
@@ -921,18 +923,22 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 		return -EIO;
 	}
 
-	/* if the directory is not empty, fail */	
-	pr_info("n links: %d", dir->i_nlink);
-	pr_info("datablock: %lu", PFS_datablock_no_from_inode(istore_bh, dir));
-
-	if (dir->i_nlink > 2)
-		return -ENOTEMPTY;
-	bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, dir));
+	/* open datablock for this entry */
+	dentry_inode = dentry->d_inode;
+	bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, dentry_inode));
 	if (!bh) {
 		pr_err("Could not read from data block");
 		return -EIO;
 		goto rmdir_release;
 	}
+
+	/* if the directory is not empty, fail */	
+	pr_info("n links: %d", dir->i_nlink);
+	pr_info("datablock: %lu", PFS_datablock_no_from_inode(istore_bh, dentry_inode));
+
+	if (dir->i_nlink > 2)
+		return -ENOTEMPTY;
+
 	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
 		pfs_dentry = PFS_dentry_from_dirblock(bh, i);
 		pr_info("active %d (%s) #%u: %d", i, pfs_dentry->filename, pfs_dentry->inode_no, pfs_dentry->active);
