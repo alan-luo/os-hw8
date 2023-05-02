@@ -263,12 +263,14 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 		if (!IS_SET(pantry_sb->free_inodes, new_ino_no))
 			break;
 	}
+	pr_info("found a free inode: %d", new_ino_no);
 
 	// find a data block inode
 	for (new_db_no = 0; new_db_no < PFS_MAX_INODES; new_db_no++) {
 		if (!IS_SET(pantry_sb->free_data_blocks, new_db_no))
 			break;
 	}
+	pr_info("found a free datablock: %d", new_db_no);
 
 	if (new_ino_no == PFS_MAX_INODES || new_db_no == PFS_MAX_INODES) {
 		pr_err("Could not find a free inode or data block!");
@@ -327,6 +329,9 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	pfs_dentry->inode_no = new_ino_no;
 	pfs_dentry->active = 1;
 	strncpy(pfs_dentry->filename, dentry->d_name.name, sizeof(pfs_dentry->filename));
+
+	mark_buffer_dirty(par_bh);
+	sync_dirty_buffer(par_bh);
 
 	/* 4. Open data block for newly_created file and zero it out */
 
