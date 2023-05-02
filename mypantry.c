@@ -16,7 +16,7 @@
 #define PFS_INODE_SIZE sizeof(struct pantryfs_inode)
 
 uint64_t PFS_datablock_no_from_inode(struct buffer_head *istore_bh, struct inode *inode) {
-	struct pantryfs *disk_inode = (struct pantryfs_inode *)
+	struct pantryfs_inode *disk_inode = (struct pantryfs_inode *)
 		(istore_bh->b_data + (inode->i_ino - 1) * PFS_INODE_SIZE);
 	return disk_inode->data_block_number;
 }
@@ -28,9 +28,9 @@ struct pantryfs_inode *PFS_inode_from_istore(struct buffer_head *istore_bh, unsi
 /* Helper function to get a pointer to a particular dentry given:
 - directory data block
 - index */
-struct pantryfs_dir_entry *PFS_dentry_from_dirblock(struct buffer_head *dir_block, unsigned int i) {
+struct pantryfs_dir_entry *PFS_dentry_from_dirblock(struct buffer_head *dir_bh, unsigned int i) {
 	return (struct pantryfs_dir_entry *)
-		(pardir_bh->b_data + (i * PFS_DENTRY_SIZE));
+		(dir_bh->b_data + (i * PFS_DENTRY_SIZE));
 }
 
 /* P6: helper function used to create new inodes in a consistent way */
@@ -88,12 +88,11 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	// basic setup
 	int ret = 0;
 	struct file *dir = filp; // filp points at dir
-
+	struct buffer_head *istore_bh;
 	// stuff to read the dir block
 	struct inode *dir_inode;
 	struct super_block *sb;
 	struct buffer_head *bh;
-
 	// stuff for iterating through data block
 	struct pantryfs_dir_entry *pfs_dentry;
 	int i;
@@ -108,16 +107,24 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	if (!res)
 		return 0;
 
+	/* get istore bh */
+	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!istore_bh) {
+		pr_err("Could not read from inode store");
+		ret = -EIO;
+		goto iterate_end;
+	}
+
 	/* retrieve the dir inode from the file struct */
 	dir_inode = file_inode(dir);
 
 	/* read the dir datablock from disk */
 	sb = dir_inode->i_sb;
-	bh = sb_bread(sb, PFS_datablock_no_from_inode(dir_inode));
+	bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, dir_inode));
 	if (!bh) {
 		pr_err("Could not read dir block");
 		ret = -EIO;
-		goto iterate_end;
+		goto iterate_release_i;
 	}
 
 	/* read through data buf dentries */
@@ -144,6 +151,8 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 
 
 	brelse(bh);
+iterate_release_i:
+	brelse(istore_bh);
 iterate_end:
 	return ret;
 }
@@ -153,10 +162,16 @@ ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len, loff_t *p
 {
 	// basic
 	ssize_t ret = 0;
+	struct buffer_head *istore_bh;
+	struct super_block *sb;
 	// read inode data block
 	struct inode *inode;
 	struct buffer_head *bh;
 	size_t amt_to_read;
+
+	/* get inode # from file pointer */
+	inode = file_inode(filp);
+	sb = inode->i_sb;
 
 	/* check if offset is valid */
 	if (*ppos == PFS_BLOCK_SIZE)
@@ -166,15 +181,21 @@ ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len, loff_t *p
 		return -EINVAL;
 	}
 
-	/* get inode # from file pointer */
-	inode = file_inode(filp);
+	/* get istore bh */
+	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!istore_bh) {
+		pr_err("Could not read from inode store");
+		ret = -EIO;
+		goto read_end;
+	}
+
 
 	/* read data block corresponding to inode */
-	bh = sb_bread(inode->i_sb, PFS_datablock_no_from_inode(inode));
+	bh = sb_bread(inode->i_sb, PFS_datablock_no_from_inode(istore_bh, inode));
 	if (!bh) {
 		pr_err("Could not read file datablock");
 		ret = -EIO;
-		goto read_end;
+		goto read_release_i;
 	}
 
 	/* copy data from data block */
@@ -196,6 +217,8 @@ ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len, loff_t *p
 
 read_release:
 	brelse(bh);
+read_release_i:
+	brelse(istore_bh);
 read_end:
 	return ret;
 }
@@ -221,7 +244,8 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	unsigned long new_ino_no, new_db_no;
 	struct pantryfs_inode *pfs_new_inode;
 	// for opening parent data block
-	struct buffer_head *par_buf;
+	struct buffer_head *par_bh;
+	struct pantryfs_dir_entry *pfs_dentry;
 	int new_dentry_no;
 
 	/* 1. Open super block and tell it that a new file and inode have been created */
@@ -284,8 +308,8 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	sync_dirty_buffer(buf_heads.i_store_bh);
 
 	/* 3. Open data block for parent and add dentry */
-	par_buf = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, parent));
-	if (!par_buf) {
+	par_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, parent));
+	if (!par_bh) {
 		pr_err("Could not read parent dir datablock");
 		ret = -EIO;
 		goto create_release_2;
@@ -293,7 +317,7 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 
 	// Get first empty dentry in dirblock
 	for (new_dentry_no = 0; new_dentry_no < PFS_MAX_CHILDREN; new_dentry_no++) {
-		pfs_dentry = PFS_dentry_from_dirblock(pardir_bh, new_dentry_no);
+		pfs_dentry = PFS_dentry_from_dirblock(par_bh, new_dentry_no);
 		if (!pfs_dentry->active) break;
 	}
 	if (new_dentry_no == PFS_MAX_CHILDREN) {
@@ -307,7 +331,7 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	/* 4. Open data block for newly_created file and zero it out */
 
 create_release_3:
-	brelse(par_buf);
+	brelse(par_bh);
 create_release_2:
 	brelse(buf_heads.i_store_bh);
 create_release:
@@ -380,6 +404,9 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 	// basic
 	ssize_t ret = 0;
 	int isappend = 0;
+	struct super_block *sb;
+	// read istore
+	struct buffer_head *istore_bh;
 	// read inode data block
 	struct inode *inode;
 	struct buffer_head *bh;
@@ -388,6 +415,7 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 
 	/* get inode # from file pointer */
 	inode = file_inode(filp);
+	sb = inode->i_sb;
 
 	/* check if arguments are valid */
 	if (*ppos > inode->i_size) {
@@ -402,12 +430,20 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 	if (isappend)
 		*ppos = inode->i_size;
 
+	/* get istore bh */
+	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!istore_bh) {
+		pr_err("Could not read from inode store");
+		ret = -EIO;
+		goto write_end;
+	}
+
 	/* read data block corresponding to inode */
-	bh = sb_bread(inode->i_sb, PFS_datablock_no_from_inode(inode));
+	bh = sb_bread(inode->i_sb, PFS_datablock_no_from_inode(istore_bh, inode));
 	if (!bh) {
 		pr_err("Could not read file datablock");
 		ret = -EIO;
-		goto write_end;
+		goto write_release_i;
 	}
 
 	/* copy from user buf to data block */
@@ -434,6 +470,8 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 
 write_release:
 	brelse(bh);
+write_release_i:
+	brelse(istore_bh);
 write_end:
 	return ret;
 }
