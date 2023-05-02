@@ -277,7 +277,8 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		unlock_new_inode(dir_dentry_inode);
 	}
 	// now finally add it
-	d_add(child_dentry, dir_dentry_inode);
+	brelse(istore_bh);
+	return d_splice_alias(child_dentry, dir_dentry_inode);
 
 lookup_release:
 	brelse(istore_bh);
