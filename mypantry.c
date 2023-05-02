@@ -160,7 +160,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		unsigned int flags)
 {
 	// setup
-	struct dentry *ret = NULL;
+	// struct dentry *ret = NULL;
 	struct super_block *sb;
 	// look for dentry from cache
 	// struct dentry *found_dentry;
@@ -175,14 +175,16 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	// store and cache
 	struct inode *dir_dentry_inode;
 	
-
 	sb = parent->i_sb;
+
+	pr_info("parent inode #: %u", parent->i_ino);
+	pr_info("child dentry name: %s", child_dentry->d_name.name);
 
 	/* check filename length */
 	if (child_dentry->d_name.len > PANTRYFS_MAX_FILENAME_LENGTH) {
 		pr_err("File name too long");
-		ret = ERR_PTR(-ENAMETOOLONG);
-		goto lookup_end;
+		// ret = ERR_PTR(-ENAMETOOLONG);
+		return NULL;
 	}
 
 	/* check if we have the dentry in the cache. if so, return it */
@@ -205,8 +207,8 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
 	if (!istore_bh) {
 		pr_err("Could not read inode block\n");
-		ret = ERR_PTR(-EIO);
-		goto lookup_end;
+		// ret = ERR_PTR(-EIO);
+		return NULL;
 	}
 
 	// - read PFS inode entry from inode #
@@ -217,8 +219,9 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	pardir_bh = sb_bread(sb, pfs_parent_inode->data_block_number);
 	if (!pardir_bh) {
 		pr_err("Could not read pardir block\n");
-		ret = ERR_PTR(-EIO);
-		goto lookup_end;
+		// ret = ERR_PTR(-EIO);
+		// goto lookup_end;
+		return NULL;
 	}
 
 	/* look for dentry in data block */
@@ -254,8 +257,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 lookup_release:
 	brelse(istore_bh);
 lookup_end:
-	return ret;
-return NULL;
+	return NULL;
 }
 
 int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
