@@ -261,15 +261,21 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		(istore_bh->b_data + (dir_dentry->inode_no - 1) * sizeof(struct pantryfs_inode));
 	// if(!root_inode)...
 	if (dir_dentry_inode->i_state & I_NEW) {
+		dir_dentry_inode->i_sb = sb;
 		dir_dentry_inode->i_ino = dir_dentry->inode_no;
 		dir_dentry_inode->i_op = &pantryfs_inode_ops;	
-		dir_dentry_inode->i_mode = dir_dentry_pfs_inode->mode;
-		if (dir_dentry_inode->i_mode & S_IFDIR)
+		// dir_dentry_inode->i_mode = dir_dentry_pfs_inode->mode;
+
+		if (dir_dentry_pfs_inode->mode & S_IFDIR) {
 			dir_dentry_inode->i_fop = &pantryfs_dir_ops;
-		else
+			dir_dentry_inode->i_mode = 0777 | S_IFDIR;
+		} else {
 			dir_dentry_inode->i_fop = &pantryfs_file_ops;
+			dir_dentry_inode->i_mode = 0666 | S_IFREG;
+		}
+		pr_info("%lu, %lu", dir_dentry_inode->i_mode, dir_dentry_pfs_inode->mode);
+		unlock_new_inode(dir_dentry_inode);
 	}
-	unlock_new_inode(dir_dentry_inode);
 	// now finally add it
 	d_add(child_dentry, dir_dentry_inode);
 
@@ -380,6 +386,8 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	root_inode->i_op = &pantryfs_inode_ops;
 	root_inode->i_fop = &pantryfs_dir_ops;
 
+
+
 	/* create dentry for root inode */
 	sb->s_root = d_make_root(root_inode);
 	if (!sb->s_root) {
@@ -402,6 +410,7 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 
 fill_super_release_both:
 	brelse(buf_heads.i_store_bh);
+	unlock_new_inode(root_inode);
 fill_super_release:
 	brelse(buf_heads.sb_bh);
 
