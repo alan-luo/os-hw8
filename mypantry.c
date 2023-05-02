@@ -100,9 +100,52 @@ void pantryfs_free_inode(struct inode *inode)
 	free_inode_nonrcu(inode);
 }
 
+/* P2: implement this to make mount/umount work */
 int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	return -EPERM;
+	int ret = 0;
+	struct pantryfs_sb_buffer_heads buf_heads;
+	struct pantryfs_super_block *pantry_sb;
+
+
+	// init sb
+	sb->s_magic = PANTRYFS_MAGIC_NUMBER;
+	sb_set_blocksize(sb, PFS_BLOCK_SIZE);
+	sb->s_maxbytes = PFS_BLOCK_SIZE;
+	sb->s_op = &pantryfs_sb_ops;
+
+	// read superblock from disk
+	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+	if (!buf_heads.sb_bh) {
+		ret = -EIO;
+		goto fill_super_end;
+	}
+
+	pantry_sb = (struct pantryfs_super_block *) sb_bh->b_data;
+
+
+	// read inode block from disk
+	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!buf_heads.i_store_bh) {
+		ret = -EIO;
+		goto fill_super_end;
+	}
+
+
+	// check magic number
+	if (sb->s_magic != pantry_sb->magic) {
+		pr_err("Wrong magic number\n");
+		ret = -EINVAL;
+		goto fill_super_release;
+	}
+
+
+	brelse(buf_heads.i_store_bh);
+fill_super_release:
+	brelse(buf_heads.sb_bh);
+
+fill_super_end:
+	return ret;
 }
 
 static struct dentry *pantryfs_mount(struct file_system_type *fs_type, int flags,
