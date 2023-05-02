@@ -104,10 +104,15 @@ void pantryfs_free_inode(struct inode *inode)
 int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	int ret = 0;
+
+	// P2: for sb init and mounting
 	struct pantryfs_sb_buffer_heads buf_heads;
 	struct pantryfs_super_block *pantry_sb;
-
 	struct inode *root_inode;
+
+	// P3: for reading inodes from PantryFS
+	char inode_buf[sizeof(struct pantryfs_inode)];
+	struct pantryfs_inode *pfs_root_inode;
 
 
 	/* initialize super block */
@@ -168,6 +173,15 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto fill_super_release_both;
 	}
 
+	/* P3: read PantryFS root inode from disk and associate it with root_inode */
+	memcpy(inode_buf, buf_heads.i_store_bh, sizeof(struct pantryfs_inode));
+	pfs_root_inode = (struct pantryfs_inode *) inode_buf;
+	root_inode->i_private = pfs_root_inode;
+	root_inode->i_sb = sb; // is this the right sb?
+
+
+	pr_info("%d\n", pfs_root_inode->file_size);
+	pr_info("%d\n", pfs_root_inode->mode);
 
 fill_super_release_both:
 	brelse(buf_heads.i_store_bh);
