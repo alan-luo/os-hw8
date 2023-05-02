@@ -178,7 +178,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	
 	sb = parent->i_sb;
 
-	pr_info("parent inode #: %u", parent->i_ino);
+	//pr_info("parent inode #: %u", parent->i_ino);
 	pr_info("child dentry name: %s", child_dentry->d_name.name);
 
 	/* check filename length */
@@ -264,7 +264,6 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		dir_dentry_inode->i_sb = sb;
 		dir_dentry_inode->i_ino = dir_dentry->inode_no;
 		dir_dentry_inode->i_op = &pantryfs_inode_ops;	
-		// dir_dentry_inode->i_mode = dir_dentry_pfs_inode->mode;
 
 		if (dir_dentry_pfs_inode->mode & S_IFDIR) {
 			dir_dentry_inode->i_fop = &pantryfs_dir_ops;
@@ -273,16 +272,15 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 			dir_dentry_inode->i_fop = &pantryfs_file_ops;
 			dir_dentry_inode->i_mode = 0666 | S_IFREG;
 		}
-		pr_info("%lu, %lu", dir_dentry_inode->i_mode, dir_dentry_pfs_inode->mode);
+		//pr_info("%lu, %lu", dir_dentry_inode->i_mode, dir_dentry_pfs_inode->mode);
 		unlock_new_inode(dir_dentry_inode);
 	}
 	// now finally add it
 	brelse(istore_bh);
-	return d_splice_alias(child_dentry, dir_dentry_inode);
+	return d_splice_alias(dir_dentry_inode, child_dentry);
 
 lookup_release:
 	brelse(istore_bh);
-lookup_end:
 	return NULL;
 }
 
