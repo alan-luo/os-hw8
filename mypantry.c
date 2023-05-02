@@ -138,7 +138,6 @@ void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, 
 	unsigned long ino = inode->i_ino;
 	struct pantryfs_super_block *pantry_sb;
 	unsigned long db_no;
-	struct pantryfs_inode *pfs_inode;
 
 	db_no = PFS_datablock_no_from_inode(istore_bh, inode);
 
@@ -326,7 +325,6 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	// for opening parent data block
 	struct buffer_head *par_bh;
 	struct pantryfs_dir_entry *pfs_dentry;
-	int new_dentry_no;
 
 	/* 1. Open super block and tell it that a new file and inode have been created */
 	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
@@ -902,8 +900,6 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 	int i;
 	struct pantryfs_dir_entry *pfs_dentry;
 	struct inode *dentry_inode;
-
-	int n_active = 0;
 
 
 	/* get istore */
