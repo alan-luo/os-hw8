@@ -17,6 +17,11 @@
 uint64_t PFS_datablock_no_from_inode(struct inode *inode) {
 	return PANTRYFS_ROOT_DATABLOCK_NUMBER + (inode->i_ino - 1);
 }
+/* Helper function to get a pointer from the istore buffer for a particular ino # */
+struct pantryfs_inode *PFS_inode_from_istore(struct buffer_head istore_bh, unsigned long ino) {
+	return (struct pantryfs_inode *) 
+		(istore_bh->b_data + (i_ino - 1) * sizeof(struct pantryfs_inode));
+}
 
 /* P6: helper function used to create new inodes in a consistent way */
 // Currently used in fill_super (root inode) and lookup (inode cache)
@@ -203,9 +208,43 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 	return -EPERM;
 }
 
+/* P7: write_inode back to disk */
 int pantryfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 {
-	return -EPERM;
+	// basic
+	int ret = 0;
+	struct super_block *sb = inode->i_sb;
+	// read inode store data block
+	struct pantryfs_inode *disk_inode;
+	struct buffer_head *istore_bh;
+
+	/* read istore data block from disk */
+	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!istore_bh) {
+		pr_err("Could not read from inode store");
+		ret = -EIO;
+		goto write_inode_end;
+	}
+
+	/* get inode struct from istore data block */
+	disk_inode = PFS_inode_from_istore(istore_bh, inode->i_ino);
+
+	/* write new inode info to disk_inode */
+	disk_inode->mode = inode->i_mode;
+	disk_inode->uid = inode->i_uid;
+	disk_inode->gid = inode->i_gid;
+	disk_inode->nlink = inode->i_nlinks;
+	disk_inode->atime = inode->i_atime;
+	disk_inode->mtime = inode->i_mtime;
+	disk_inode->ctime = inode->i_ctime;
+	disk_inode->file_size = inode->i_size;
+
+	mark_buffer_dirty(istore_bh);
+
+	/* clean up */
+	brelse(istore_bh);
+write_inode_end:
+	return ret;
 }
 
 void pantryfs_evict_inode(struct inode *inode)
@@ -220,6 +259,7 @@ int pantryfs_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 	return -EPERM;
 }
 
+/* P7: implement write */
 ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, loff_t *ppos)
 {
 	// basic
@@ -324,8 +364,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	}
 
 	// - read PFS inode entry from inode #
-	pfs_parent_inode = (struct pantryfs_inode *) 
-		(istore_bh->b_data + (parent->i_ino - 1) * sizeof(struct pantryfs_inode));
+	pfs_parent_inode = PFS_inode_from_istore(istore_bh, parent->i_ino);
 	/* read directory block from disk */
 	pardir_bh = sb_bread(sb, pfs_parent_inode->data_block_number);
 	if (!pardir_bh) {
