@@ -14,6 +14,10 @@
 
 #define PFS_DENTRY_SIZE sizeof(struct pantryfs_dir_entry)
 
+uint64_t datablock_no_from_inode(struct inode *inode) {
+	return PANTRYFS_ROOT_DATABLOCK_NUMBER + (dir_inode->i_ino - 1);
+}
+
 /* P3: implement `iterate()` */
 int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 {
@@ -45,7 +49,7 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 
 	/* read the root dir inode from disk */
 	sb = dir_inode->i_sb;
-	bh = sb_bread(sb, PANTRYFS_ROOT_DATABLOCK_NUMBER + (dir_inode->i_ino - 1));
+	bh = sb_bread(sb, datablock_no_from_inode(dir_inode));
 	if (!bh) {
 		pr_err("Could not read dir block");
 		ret = -EIO;
@@ -80,9 +84,29 @@ iterate_end:
 	return ret;
 }
 
+/* P5: implement read */
 ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len, loff_t *ppos)
 {
-	return -EPERM;
+	// basic
+	ssize_t ret = 0;
+	// read inode data block
+	struct inode *inode;
+	struct buffer_head *bh;
+
+	/* get inode # from file pointer */
+	inode = file_inode(filp);
+
+	/* read data block corresponding to inode */
+	sb_bread(inode->sb, datablock_no_from_inode(dir_inode));
+
+	return -EFAULT;
+
+	/* copy data from data block */
+	// if (copy_to_user(buf, + *offset, len))
+	// 	return -EFAULT;
+
+	// *offset	+= len;
+	// return len;
 }
 
 loff_t pantryfs_llseek(struct file *filp, loff_t offset, int whence)
