@@ -174,6 +174,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	int i;
 	// store and cache
 	struct inode *dir_dentry_inode;
+	struct pantryfs_inode *dir_dentry_pfs_inode;
 	
 	sb = parent->i_sb;
 
@@ -256,7 +257,19 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 
 	// get inode information
 	dir_dentry_inode = iget_locked(sb, dir_dentry->inode_no);
-
+	dir_dentry_pfs_inode = (struct pantryfs_inode *) 
+		(istore_bh->b_data + (dir_dentry->inode_no - 1) * sizeof(struct pantryfs_inode));
+	// if(!root_inode)...
+	if (!(root_inode->i_state & NEW)) {
+		dir_dentry_inode->i_ino = dir_dentry->inode_no;
+		dir_dentry_inode->i_op = &pantryfs_inode_ops;	
+		dir_dentry_inode->i_mode = dir_dentry_pfs_inode->mode;
+		if (dir_dentry_inode->i_mode & S_IFDIR)
+			dir_dentry_inode->i_fop = &pantryfs_dir_ops;
+		else
+			dir_dentry_inode->i_fop = &pantryfs_file_ops;
+	}
+	unlock_new_inode(dir_dentry_inode);
 	// now finally add it
 	d_add(child_dentry, dir_dentry_inode);
 
