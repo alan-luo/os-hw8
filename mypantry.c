@@ -230,12 +230,19 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		pfs_dentry = (struct pantryfs_dir_entry *)
 			(pardir_bh->b_data + (i * PFS_DENTRY_SIZE));
 
+		pr_info("%d: %s", i, pfs_dentry->filename);
+
 		if (!pfs_dentry->active)
 			continue;
+		pr_info("active");
 
 		// if we found a match
 		if(!strncmp(pfs_dentry->filename, child_dentry->d_name.name, 
 				PANTRYFS_FILENAME_BUF_SIZE)) {
+			pr_info("Found a match:")
+			pr_info("%s", pfs_dentry->filename);
+			pr_info("%s", child_dentry->d_name.name);
+
 			dir_dentry = pfs_dentry;
 			break;	
 		}
