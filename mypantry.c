@@ -18,6 +18,45 @@ uint64_t PFS_datablock_no_from_inode(struct inode *inode) {
 	return PANTRYFS_ROOT_DATABLOCK_NUMBER + (inode->i_ino - 1);
 }
 
+/* P6: helper function used to create new inodes in a consistent way */
+// Currently used in fill_super (root inode) and lookup (inode cache)
+struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantryfs_inode *pfs_inode) {
+	struct inode *inode;
+	int isroot;
+
+	isroot = ino == PANTRYFS_ROOT_INODE_NUMBER;
+
+	inode = iget_locked(sb, le64_to_cpu(0));
+	if (!inode) {
+		pr_err("Could not allocate inode\n");
+		return NULL;
+	}
+	if (!(inode->i_state & I_NEW))
+		return inode;
+
+	// universal to all inodes
+	inode->i_sb = sb;
+	inode->i_op = &pantryfs_inode_ops;
+
+	// set this particular inode's values
+	inode->i_ino = ino;
+	set_nlink(inode, pfs_inode->nlink);
+
+	if (pfs_inode->mode & S_IFDIR || isroot) {
+		inode->i_fop = &pantryfs_dir_ops;
+		inode->i_mode = 0777 | S_IFDIR; // make root drwx-rwx-rwx
+		inode->i_size = BLOCK_SIZE;
+	} else {
+		inode->i_fop = &pantryfs_file_ops;
+		inode->i_mode = 0666 | S_IFREG;
+		inode->i_size = pfs_inode->file_size;
+	}
+
+	unlock_new_inode(inode);
+
+	return inode;
+}
+
 /* P3: implement `iterate()` */
 int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 {
@@ -270,29 +309,16 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	/* store and cache the entry we just found */
 
 	// get inode information
-	dd_inode = iget_locked(sb, le64_to_cpu(dir_dentry->inode_no));
-	if(!dd_inode) {
-		pr_err("Could not allocate dir dentry inode")	;
+	dd_pfs_inode = (struct pantryfs_inode *) 
+		(istore_bh->b_data + (dir_dentry->inode_no - 1) * sizeof(struct pantryfs_inode));
+
+	dd_inode = pfs_inode(sb, dir_dentry->inode_no, dd_pfs_inode);
+	if (dd_inode == NULL) {
+		pr_err("pfs_inode failed");
 		ret = ERR_PTR(-ENOMEM);
 		goto lookup_release;
 	}
-	dd_pfs_inode = (struct pantryfs_inode *) 
-		(istore_bh->b_data + (dir_dentry->inode_no - 1) * sizeof(struct pantryfs_inode));
-	if (dd_inode->i_state & I_NEW) {
-		dd_inode->i_sb = sb;
-		dd_inode->i_ino = dir_dentry->inode_no;
-		dd_inode->i_op = &pantryfs_inode_ops;	
-		dd_inode->i_mode = dd_pfs_inode->mode;
-
-		if (dd_pfs_inode->mode & S_IFDIR) {
-			dd_inode->i_fop = &pantryfs_dir_ops;
-			dd_inode->i_mode = 0777 | S_IFDIR;
-		} else {
-			dd_inode->i_fop = &pantryfs_file_ops;
-			dd_inode->i_mode = 0666 | S_IFREG;
-		}
-		unlock_new_inode(dd_inode);
-	}
+	
 	// now finally add it
 	d_add(child_dentry, dd_inode);
 
@@ -388,26 +414,21 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 	
 	/* create VFS inode for root directory */
-	root_inode = iget_locked(sb, 0);
-	if (!root_inode) {
-		pr_err("Could not allocate root inode\n");
+
+	/* P3: read PantryFS root inode from disk and associate it with root_inode */
+	// Not sure if we strictly have to do malloc - but I don't know if we can guarantee
+	// that buffer heads will stick around, so this seems reasonable
+	inode_buf = kmalloc(sizeof(struct pantryfs_inode), GFP_KERNEL);
+	memcpy(inode_buf, buf_heads.i_store_bh->b_data, sizeof(struct pantryfs_inode));
+	pfs_root_inode = (struct pantryfs_inode *) inode_buf;
+
+	root_inode = pfs_inode(sb, PANTRYFS_ROOT_INODE_NUMBER, pfs_root_inode);
+	if (root_inode == NULL) {
+		pr_err("pfs_inode failed");
 		ret = -ENOMEM;
 		goto fill_super_release_both;
 	}
-	// Not entirely sure if this is necessary but I added it to stay consistent
-	// with kernel code (which pretty much always checks this)
-	if (!(root_inode->i_state & I_NEW)) {
-		pr_err("Something weird happened");
-		ret = -EPERM;
-		goto fill_super_release_both;
-	}
-
-	root_inode->i_ino = PANTRYFS_ROOT_INODE_NUMBER;
-	root_inode->i_mode = 0777 | S_IFDIR; // make root drwx-rwx-rwx
-	root_inode->i_op = &pantryfs_inode_ops;
-	root_inode->i_fop = &pantryfs_dir_ops;
-
-
+	root_inode->i_private = pfs_root_inode;
 
 	/* create dentry for root inode */
 	sb->s_root = d_make_root(root_inode);
@@ -416,17 +437,6 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 		ret = -ENOMEM;
 		goto fill_super_release_both;
 	}
-
-	/* P3: read PantryFS root inode from disk and associate it with root_inode */
-	// Not sure if we strictly have to do this - but I don't know if we can guarantee
-	// that buffer heads will stick around, so this seems reasonable
-	inode_buf = kmalloc(sizeof(struct pantryfs_inode), GFP_KERNEL);
-
-	memcpy(inode_buf, buf_heads.i_store_bh->b_data, sizeof(struct pantryfs_inode));
-	pfs_root_inode = (struct pantryfs_inode *) inode_buf;
-	root_inode->i_private = pfs_root_inode;
-	root_inode->i_sb = sb; // is this the right sb?
-
 
 
 fill_super_release_both:
