@@ -43,15 +43,9 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	/* retrieve the dir inode from the file struct */
 	dir_inode = file_inode(dir);
 
-	/* check that we're root */
-	if (dir_inode->i_ino != PANTRYFS_ROOT_INODE_NUMBER) {
-		ret = -EPERM;
-		goto iterate_end;
-	}
-
 	/* read the root dir inode from disk */
 	sb = dir_inode->i_sb;
-	bh = sb_bread(sb, PANTRYFS_ROOT_DATABLOCK_NUMBER);
+	bh = sb_bread(sb, PANTRYFS_ROOT_DATABLOCK_NUMBER + (dir_inode->i_ino - 1));
 	if (!bh) {
 		pr_err("Could not read dir block");
 		ret = -EIO;
@@ -128,32 +122,6 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 	return -EPERM;
 }
 
-/*
-sb_bread takes in data block #. where to get data block #?
-
-- if parent is the root node, we just use the const ROOT_DATABLOCK #
-- if parent is not the root node, how to get it??
-
-we NEED the data block # of `parent` for SURE
-
-`struct inode` doesn't have any built-in fields for our own data
-
-therefore we need to malloc some of our own data and attach it to `struct inode`
-
-*/
-
-
-// Tal: You can add error checking if you'd like and return an appropriate error
-// code on failure, but you need to make sure you return NULL if a new entry was
-// created, and the relevant entry if one was found. See the documentation for 
-// d_splice_alias() for more information (Hint: you should use this function in
-// place of d_add() in this instance).
-
-/*
- * Look for dentry in dir.
- * Fill dentry with NULL if not in dir, with the corresponding inode if found.
- * Returns NULL on success.
- */
 
 /* P4: implement subdir lookup */
 struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry,
@@ -229,19 +197,12 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		pfs_dentry = (struct pantryfs_dir_entry *)
 			(pardir_bh->b_data + (i * PFS_DENTRY_SIZE));
 
-		pr_info("%d: %s", i, pfs_dentry->filename);
-
 		if (!pfs_dentry->active)
 			continue;
-		pr_info("active");
-		pr_info("%s", pfs_dentry->filename);
-		pr_info("%s", child_dentry->d_name.name);
 
 		// if we found a match
 		if(!strncmp(pfs_dentry->filename, child_dentry->d_name.name, 
 				PANTRYFS_FILENAME_BUF_SIZE)) {
-			pr_info("Found a match:");
-
 			dir_dentry = pfs_dentry;
 			break;	
 		}
@@ -268,7 +229,6 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		dd_inode->i_ino = dir_dentry->inode_no;
 		dd_inode->i_op = &pantryfs_inode_ops;	
 		dd_inode->i_mode = dd_pfs_inode->mode;
-		pr_info("%lu, %lu", dd_inode->i_mode, dd_pfs_inode->mode);
 
 		if (dd_pfs_inode->mode & S_IFDIR) {
 			dd_inode->i_fop = &pantryfs_dir_ops;
@@ -277,7 +237,6 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 			dd_inode->i_fop = &pantryfs_file_ops;
 			dd_inode->i_mode = 0666 | S_IFREG;
 		}
-		pr_info("%lu, %lu", dd_inode->i_mode, dd_pfs_inode->mode);
 		unlock_new_inode(dd_inode);
 	}
 	// now finally add it
