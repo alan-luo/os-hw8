@@ -151,12 +151,11 @@ loff_t pantryfs_llseek(struct file *filp, loff_t offset, int whence)
 	} else if (whence == SEEK_END) {
 		off = inode->i_size + offset;
 	} else {
-		pr_info("llseek whence invalid");
+		pr_err("llseek whence invalid");
 		return -EINVAL;
 	}
 
-	filp->f_pos = off;
-	return off;
+	return vfs_setpos(filp, off, BLOCK_SIZE);
 }
 
 int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, bool excl)
