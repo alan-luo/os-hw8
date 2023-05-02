@@ -90,7 +90,7 @@ void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, 
 	db_no = PFS_datablock_no_from_inode(istore_bh, inode);
 
 	// Unset bit vectors in sb
-	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
+	pantry_sb = (struct pantryfs_super_block *) sb_bh->b_data;
 
 	CLEARBIT(pantry_sb->free_inodes, ino);
 	CLEARBIT(pantry_sb->free_inodes, db_no);
@@ -374,27 +374,26 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 	int ret = 0;
 	struct super_block *sb = dir->i_sb;
 	// read istore and data blocks
-	struct buffer_head *sb_bh;
-	struct buffer_head *istore_bh;
+	struct pantryfs_sb_buffer_heads buf_heads;
 	struct buffer_head *dir_bh;
 	// remove dentry
 	int i;
 	struct pantryfs_dir_entry *pfs_dentry;
 	// update links
 	struct inode *dentry_inode = dentry->d_inode;
-	struct inode *dentry_pfs_inode;
+	struct pantryfs_inode *dentry_pfs_inode;
 
 
 	/* read istore block */
-	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
-	if (!istore_bh) {
+	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!buf_heads.i_store_bh) {
 		pr_err("Could not read from inode store");
 		ret = -EIO;
 		goto unlink_end;
 	}
 
 	/* read dir data block */
-	dir_bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, dir));
+	dir_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, dir));
 	if (!dir_bh) {
 		pr_err("Could not read parent dir datablock");
 		ret = -EIO;
@@ -426,10 +425,10 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	// now write to the inode store
 	dentry_pfs_inode = PFS_inode_from_istore(dir_bh, dentry_inode->i_ino);
-	dentry_pfs_inode->nlinks--;
+	dentry_pfs_inode->nlink--;
 
-	mark_buffer_dirty(istore_bh);
-	sync_dirty_buffer(istore_bh);
+	mark_buffer_dirty(buf_heads.i_store_bh);
+	sync_dirty_buffer(buf_heads.i_store_bh);
 
 	/* if inode nlinks is zero, do a hard delete (write to relevant blocks) */
 	if (dentry_inode->i_nlink != 0)
@@ -441,14 +440,14 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 		ret = -EIO;
 		goto unlink_release_3;
 	}
-	PFS_remove_inode(sb_bh, istore_bh, dentry_inode);
+	PFS_remove_inode(buf_heads.sb_bh, buf_heads.i_store_bh, dentry_inode);
 
 unlink_release_3:
-	brelse(sb_bh);
+	brelse(buf_heads.sb_bh);
 unlink_release_2:
 	brelse(dir_bh);
 unlink_release:
-	brelse(istore_bh);
+	brelse(buf_heads.i_store_bh);
 unlink_end:
 	return ret;
 }
@@ -496,13 +495,30 @@ write_inode_end:
 /* P9 */
 void pantryfs_evict_inode(struct inode *inode)
 {
+	struct super_block *sb = inode->i_sb;
+	struct pantryfs_sb_buffer_heads buf_heads;
 	// <------ begin TA code ----->
 	/* Required to be called by VFS. If not called, evict() will BUG out.*/
 	truncate_inode_pages_final(&inode->i_data);
 	clear_inode(inode);
 	// </------ end TA code ----->
 
-	// PFS_remove_inode(sb_bh, istore_bh, dentry_inode);
+	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!buf_heads.i_store_bh) {
+		pr_err("Could not read from inode store");
+		return;
+	}
+	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+	if (!buf_heads.sb_bh) {
+		pr_err("Could not read super block");
+		goto evict_release;
+	}
+
+	PFS_remove_inode(buf_heads.sb_bh, buf_heads.i_store_bh, inode);
+
+	brelse(buf_heads.sb_bh);
+evict_release:
+	brelse(buf_heads.i_store_bh);
 }
 
 /* P7: implement fsync */
