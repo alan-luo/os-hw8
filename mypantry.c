@@ -37,6 +37,7 @@ struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantry
 	// universal to all inodes
 	inode->i_sb = sb;
 	inode->i_op = &pantryfs_inode_ops;
+	inode->i_blocks = 1;
 
 	// set this particular inode's values
 	inode->i_ino = ino;
@@ -48,6 +49,10 @@ struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantry
 	set_nlink(inode, pfs_inode->nlink);
 	i_uid_write(inode, le64_to_cpu(pfs_inode->uid));
 	i_gid_write(inode, le64_to_cpu(pfs_inode->gid));
+
+	inode->i_atime = pfs_inode->i_atime;
+	inode->i_mtime = pfs_inode->i_mtime;
+	inode->i_ctime = pfs_inode->i_ctime;
 
 	if (pfs_inode->mode & S_IFDIR || isroot) {
 		inode->i_fop = &pantryfs_dir_ops;
