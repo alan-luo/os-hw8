@@ -304,6 +304,9 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	SETBIT(pantry_sb->free_inodes, new_ino_no);
 	SETBIT(pantry_sb->free_data_blocks, new_db_no);
 
+	pr_info("Found this empty inode: %lu", new_ino_no);
+	pr_info("Found this data block: %lu", new_db_no);
+
 	mark_buffer_dirty(buf_heads.sb_bh);
 	sync_dirty_buffer(buf_heads.sb_bh);
 
