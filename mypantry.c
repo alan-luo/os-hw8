@@ -174,14 +174,17 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	/* P3: read PantryFS root inode from disk and associate it with root_inode */
-	memcpy(inode_buf, buf_heads.i_store_bh, sizeof(struct pantryfs_inode));
+	// Not sure if we strictly have to do this - but I don't know if we can guarantee
+	// that buffer heads will stick around, so this seems reasonable
+	memcpy(inode_buf, buf_heads.i_store_bh->b_data, sizeof(struct pantryfs_inode));
 	pfs_root_inode = (struct pantryfs_inode *) inode_buf;
 	root_inode->i_private = pfs_root_inode;
 	root_inode->i_sb = sb; // is this the right sb?
 
 
-	pr_info("%d\n", pfs_root_inode->file_size);
-	pr_info("%d\n", pfs_root_inode->mode);
+	pr_info("%lu\n", pfs_root_inode->file_size);
+	pr_info("%hi\n", pfs_root_inode->mode);
+	pr_info("%hi\n", root_inode->i_mode);
 
 fill_super_release_both:
 	brelse(buf_heads.i_store_bh);
