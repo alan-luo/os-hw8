@@ -81,7 +81,6 @@ struct pantryfs_dir_entry *PFS_next_empty_dentry(struct buffer_head *par_bh) {
 		}
 	}
 
-	pr_info("Found this empty dentry: %lu", i);
 	return ret_dentry;
 }
 
@@ -143,11 +142,6 @@ void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, 
 
 	db_no = PFS_datablock_no_from_inode(istore_bh, inode);
 
-
-	pr_info("removing inode:");
-	pr_info("ino: %lu", ino);
-	pr_info("dbno: %lu", db_no);
-	pr_info("\n");
 
 	if (db_no == 0) {
 		pr_info("already removed\n");
@@ -371,9 +365,6 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 		pr_err("Could not find a free dentry");
 		goto create_release_3;
 	}
-
-	pr_info("Found this empty inode: %lu", new_i_db_no.i_no);
-	pr_info("Found this empty data block: %lu", new_i_db_no.db_no);
 
 
 	/* 4. Now, write out all information */
@@ -619,7 +610,6 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 
 	/* check for O_APPEND flag */
 	isappend = filp->f_flags & O_APPEND;
-	pr_info("append: %d", isappend);
 
 	if (isappend)
 		*ppos = inode->i_size;
@@ -933,25 +923,18 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 	}
 
 	/* if the directory is not empty, fail */	
-	pr_info("n links: %d", dir->i_nlink);
-	pr_info("datablock: %lu", PFS_datablock_no_from_inode(istore_bh, dentry_inode));
 
 	if (dir->i_nlink > 2)
 		return -ENOTEMPTY;
-
 	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
 		pfs_dentry = PFS_dentry_from_dirblock(bh, i);
-		pr_info("active %d (%s) #%u: %d", i, pfs_dentry->filename, pfs_dentry->inode_no, pfs_dentry->active);
-
 		if (pfs_dentry->active) {
-			n_active++;
+			ret = -ENOTEMPTY;
+			goto rmdir_release_2;
 		}
 	}
 
-	if (n_active > 1)
-		return -ENOTEMPTY;
-	pr_info("\n");
-	
+rmdir_release_2:	
 	brelse(bh);
 rmdir_release:
 	brelse(istore_bh);
@@ -1109,8 +1092,6 @@ static int pantryfs_init(void)
 		pr_info("Successfully registered mypantryfs\n");
 	else
 		pr_err("Failed to register mypantryfs. Error:[%d]", ret);
-
-	pr_info("PFS_MAX_CHILDREN: %u", PFS_MAX_CHILDREN);
 
 	return ret;
 }
