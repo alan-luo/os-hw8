@@ -233,7 +233,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	/* look for dentry in data block */
 	dir_dentry = NULL;
 	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
-		pfs_dentry = (struct pantryfs_dir_entry *) pardir_bh + (i * PFS_DENTRY_SIZE);
+		pfs_dentry = (struct pantryfs_dir_entry *) pardir_bh->b_data + (i * PFS_DENTRY_SIZE);
 
 		if (!pfs_dentry->active)
 			continue;
