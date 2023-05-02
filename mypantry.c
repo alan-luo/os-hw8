@@ -797,8 +797,10 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	// writing information
 	struct pantryfs_super_block *pantry_sb;
 	struct pantryfs_inode *pfs_new_inode;
+	// new data block
+	struct buffer_head *new_bh;
 
-	/* 1. Open necessary buffers */
+	/* 1. Open sb and get new i_no, db_no */
 
 	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
 	if (!buf_heads.sb_bh) {
@@ -806,6 +808,13 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 		ret = -EIO;
 		goto mkdir_end;
 	}
+	new_i_db_no = PFS_get_free_i_db_no(buf_heads.sb_bh);
+	if (new_i_db_no.db_no == -1 || new_i_db_no.i_no == -1) {
+		pr_err("Could not find a free inode or data block!");
+		goto mkdir_release;
+	}
+
+	/* 2. Open i store */
 
 	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
 	if (!buf_heads.i_store_bh) {
@@ -814,6 +823,7 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 		goto mkdir_release;
 	}
 
+	/* 3. Open dir block */
 	par_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, dir));
 	if (!par_bh) {
 		pr_err("Could not read parent dir datablock");
@@ -821,12 +831,7 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 		goto mkdir_release_2;
 	}
 
-	/* 2. Find empty i_no, db_no, dentry */
-	new_i_db_no = PFS_get_free_i_db_no(buf_heads.sb_bh);
-	if (new_i_db_no.db_no == -1 || new_i_db_no.i_no == -1) {
-		pr_err("Could not find a free inode or data block!");
-		goto mkdir_release_3;
-	}
+	/* 3. Find empty i_no, db_no, dentry */
 	// Get first empty dentry in dirblock
 	pfs_dentry = PFS_next_empty_dentry(par_bh);
 	if (pfs_dentry == NULL) {
@@ -834,7 +839,7 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 		goto mkdir_release_3;
 	}
 
-	/* 3. Now write out information */
+	/* 4. Now write out information */
 	// write sb - mark inode and datablock entries as used
 	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
 	SETBIT(pantry_sb->free_inodes, new_i_db_no.i_no);
@@ -869,7 +874,22 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	mark_buffer_dirty(par_bh);
 	sync_dirty_buffer(par_bh);
 
+	/* zero out new data block */
+	new_bh = sb_bread(sb, new_i_db_no.db_no);
+	if (!new_bh) {
+		pr_err("Could not read new dir datablock");
+		ret = -EIO;
+		goto mkdir_release_3;
+	}
 
+	memset(new_bh->b_data, 0, PFS_BLOCK_SIZE);
+
+	mark_buffer_dirty(new_bh);
+	sync_dirty_buffer(new_bh);
+
+	/* clean up */
+
+	brelse(new_bh);
 mkdir_release_3:
 	brelse(par_bh);
 mkdir_release_2:
