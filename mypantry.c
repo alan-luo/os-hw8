@@ -18,9 +18,9 @@ uint64_t PFS_datablock_no_from_inode(struct inode *inode) {
 	return PANTRYFS_ROOT_DATABLOCK_NUMBER + (inode->i_ino - 1);
 }
 /* Helper function to get a pointer from the istore buffer for a particular ino # */
-struct pantryfs_inode *PFS_inode_from_istore(struct buffer_head istore_bh, unsigned long ino) {
+struct pantryfs_inode *PFS_inode_from_istore(struct buffer_head *istore_bh, unsigned long ino) {
 	return (struct pantryfs_inode *) 
-		(istore_bh->b_data + (i_ino - 1) * sizeof(struct pantryfs_inode));
+		(istore_bh->b_data + (ino - 1) * sizeof(struct pantryfs_inode));
 }
 
 /* P6: helper function used to create new inodes in a consistent way */
@@ -231,12 +231,12 @@ int pantryfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 	/* write new inode info to disk_inode */
 	disk_inode->mode = inode->i_mode;
-	disk_inode->uid = inode->i_uid;
-	disk_inode->gid = inode->i_gid;
-	disk_inode->nlink = inode->i_nlinks;
-	disk_inode->atime = inode->i_atime;
-	disk_inode->mtime = inode->i_mtime;
-	disk_inode->ctime = inode->i_ctime;
+	disk_inode->uid = inode->i_uid.val; // don't support this now
+	disk_inode->gid = inode->i_gid.val;
+	disk_inode->nlink = inode->i_nlink;
+	disk_inode->i_atime = inode->i_atime;
+	disk_inode->i_mtime = inode->i_mtime;
+	disk_inode->i_ctime = inode->i_ctime;
 	disk_inode->file_size = inode->i_size;
 
 	mark_buffer_dirty(istore_bh);
@@ -271,6 +271,12 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 	size_t amt_to_write;
 
 	/* check if arguments are valid */
+	if (*ppos == PFS_BLOCK_SIZE)
+		return 0;
+	else if (*ppos > PFS_BLOCK_SIZE) {
+		pr_err("Offset larger than 4096 bytes (block size)");
+		return -EINVAL;
+	}
 
 	/* get inode # from file pointer */
 	inode = file_inode(filp);
@@ -298,6 +304,12 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 
 	*ppos += amt_to_write;
 	ret = amt_to_write;
+
+	/* write inode if needed*/
+	if (*ppos > inode->i_size) {
+		i_size_write(inode, *ppos);
+		mark_inode_dirty(inode);
+	}
 
 write_release:
 	brelse(bh);
