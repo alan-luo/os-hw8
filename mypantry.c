@@ -139,7 +139,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	struct pantryfs_dir_entry *dir_dentry;
 	int i;
 	// store and cache
-	struct inode *dd_inode;
+	struct inode *dd_inode = NULL;
 	struct pantryfs_inode *dd_pfs_inode;
 	
 	sb = parent->i_sb;
@@ -248,6 +248,10 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 lookup_release:
 	brelse(istore_bh);
 lookup_end:
+	// Tal has a note on this but I don't quite understand it?
+	// if (ret != NULL) { // as of now this only happens on error
+	// 	return d_splice_alias(dd_inode, child_dentry);
+	// }
 	return ret;
 }
 
