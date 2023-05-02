@@ -32,6 +32,59 @@ struct pantryfs_dir_entry *PFS_dentry_from_dirblock(struct buffer_head *dir_bh, 
 		(dir_bh->b_data + (i * PFS_DENTRY_SIZE));
 }
 
+/* Helper functions used by create and mkdir */
+struct i_db_no {
+	unsigned long i_no;
+	unsigned long db_no;
+};
+// returns -1 on error
+struct i_db_no PFS_get_free_i_db_no(struct buffer_head *sb_bh) {
+	struct pantryfs_super_block *pantry_sb;
+	struct i_db_no ret;
+	int i;
+
+	pantry_sb = (struct pantryfs_super_block *) sb_bh->b_data;
+
+	ret.i_no = -1;
+	ret.db_no = -1;
+
+	// find a free inode
+	for (i = 0; i < PFS_MAX_INODES; i++) {
+		if (!IS_SET(pantry_sb->free_inodes, i)) {
+			ret.i_no = i;
+			break;
+		}
+	}
+
+	// find a data block inode
+	for (i = 0; i < PFS_MAX_INODES; i++) {
+		if (!IS_SET(pantry_sb->free_data_blocks, i)) {
+			ret.db_no = i;
+			break;
+		}
+	}
+
+	return ret;
+}
+
+// returns NULL on failure
+struct pantryfs_dir_entry *PFS_next_empty_dentry(struct buffer_head *par_bh) {
+	int i;
+	struct pantryfs_dir_entry *pfs_dentry;
+	struct pantryfs_dir_entry *ret_dentry = NULL;
+
+	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
+		pfs_dentry = PFS_dentry_from_dirblock(par_bh, i);
+		if (!pfs_dentry->active) {
+			ret_dentry = pfs_dentry;
+			break;
+		}
+	}
+
+	pr_info("Found this empty dentry: %lu", i);
+	return ret_dentry;
+}
+
 /* P6: helper function used to create new inodes in a consistent way */
 // Currently used in fill_super (root inode) and lookup (inode cache)
 struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantryfs_inode *pfs_inode) {
@@ -280,7 +333,7 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	// for reading super block
 	struct pantryfs_super_block *pantry_sb;
 	// new inode info
-	unsigned long new_ino_no, new_db_no;
+	struct i_db_no new_i_db_no;
 	struct pantryfs_inode *pfs_new_inode;
 	// for opening parent data block
 	struct buffer_head *par_bh;
@@ -295,21 +348,9 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 		goto create_end;
 	}
 
-	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
+	new_i_db_no = PFS_get_free_i_db_no(buf_heads.sb_bh);
 
-	// find a free inode
-	for (new_ino_no = 0; new_ino_no < PFS_MAX_INODES; new_ino_no++) {
-		if (!IS_SET(pantry_sb->free_inodes, new_ino_no))
-			break;
-	}
-
-	// find a data block inode
-	for (new_db_no = 0; new_db_no < PFS_MAX_INODES; new_db_no++) {
-		if (!IS_SET(pantry_sb->free_data_blocks, new_db_no))
-			break;
-	}
-
-	if (new_ino_no == PFS_MAX_INODES || new_db_no == PFS_MAX_INODES) {
+	if (new_i_db_no.db_no == -1 || new_i_db_no.i_no == -1) {
 		pr_err("Could not find a free inode or data block!");
 		goto create_end;
 	}
@@ -331,35 +372,31 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	}
 
 	// Get first empty dentry in dirblock
-	for (new_dentry_no = 0; new_dentry_no < PFS_MAX_CHILDREN; new_dentry_no++) {
-		pfs_dentry = PFS_dentry_from_dirblock(par_bh, new_dentry_no);
-		if (!pfs_dentry->active) break;
-	}
-	if (new_dentry_no == PFS_MAX_CHILDREN) {
+	pfs_dentry = PFS_next_empty_dentry(par_bh);
+	if (pfs_dentry == NULL) {
 		pr_err("Could not find a free dentry");
 		goto create_release_3;
 	}
 
-	pr_info("Found this empty inode: %lu", new_ino_no);
-	pr_info("Found this empty data block: %lu", new_db_no);
-	pr_info("Found this empty dentry: %lu", new_dentry_no);
+	pr_info("Found this empty inode: %lu", new_i_db_no.i_no);
+	pr_info("Found this empty data block: %lu", new_i_db_no.db_no);
 
 
 	/* 4. Now, write out all information */
 
 	// write sb - mark inode and datablock entries as used
-	SETBIT(pantry_sb->free_inodes, new_ino_no);
-	SETBIT(pantry_sb->free_data_blocks, new_db_no);
+	SETBIT(pantry_sb->free_inodes, new_i_db_no.i_no);
+	SETBIT(pantry_sb->free_data_blocks, new_i_db_no.db_no);
 
 	mark_buffer_dirty(buf_heads.sb_bh);
 	sync_dirty_buffer(buf_heads.sb_bh);
 
 	// write istore
-	pfs_new_inode = PFS_inode_from_istore(buf_heads.i_store_bh, new_ino_no);
+	pfs_new_inode = PFS_inode_from_istore(buf_heads.i_store_bh, new_i_db_no.i_no);
 
 	pfs_new_inode->nlink = 1;
 	pfs_new_inode->mode = S_IFREG | 0666;
-	pfs_new_inode->data_block_number = new_db_no;
+	pfs_new_inode->data_block_number = new_i_db_no.db_no;
 	pfs_new_inode->file_size = 0;
 
 	pfs_new_inode->uid = parent->i_uid.val;
@@ -374,7 +411,7 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 
 	// write dentry
 
-	pfs_dentry->inode_no = new_ino_no;
+	pfs_dentry->inode_no = new_i_db_no.i_no;
 	pfs_dentry->active = 1;
 	strncpy(pfs_dentry->filename, dentry->d_name.name, sizeof(pfs_dentry->filename));
 
@@ -751,6 +788,7 @@ lookup_end:
 	return ret;
 }
 
+/* P10: implement mkdir */
 int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	return -EPERM;
