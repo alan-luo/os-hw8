@@ -11,9 +11,71 @@
 #include "pantryfs_sb.h"
 #include "pantryfs_sb_ops.h"
 
+/* P3: implement `iterate()` */
 int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 {
-	return -EPERM;
+	// basic setup
+	int ret = 0;
+	struct file *dir = filp; // filp points at dir
+
+	// stuff to read the dir block
+	struct inode *dir_inode;
+	struct super_block *sb;
+	struct buffer_head *bh;
+	char data_buf[PFS_BLOCK_SIZE];
+
+	// stuff for iterating through data block
+	struct pantryfs_dir_entry *pfs_dentry;
+	size_t DENTRY_SIZE;
+	int i, j;
+	int res;
+
+	DENTRY_SIZE = sizeof(struct pantryfs_dir_entry);
+
+	/* retrieve the dir inode from the file struct */
+	dir_inode = file_inode(dir);
+
+	/* check that we're root */
+	if (dir_inode->i_ino != PANTRYFS_ROOT_INODE_NUMBER) {
+		ret = -EPERM;
+		goto iterate_end;
+	}
+
+	/* read the root dir inode from disk */
+	sb = dir_inode->i_sb;
+	dir_inode->i_private;
+	bh = sb_bread(sb, PANTRYFS_ROOT_DATABLOCK_NUMBER);
+	memcpy(data_buf, bh->b_data, PFS_BLOCK_SIZE);
+
+	/* read through data buf dentries */
+	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
+		pfs_dentry = (struct pantryfs_dir_entry *) buf[i * DENTRY_SIZE];
+
+		// This flag is sufficent to check for
+		// * A) if the dentry is dead / lazily deleted
+		// * B) if the end of the dentry list has been reached - since it's
+		//   zeroed out, dentry->active is also zero
+		if (!pfs_dentry->active)
+			continue;
+
+		res = dir_emit(ctx, pfs_dentry->filename, PANTRYFS_FILENAME_BUF_SIZE,
+			pfs_dentry->inode_no, DT_UNKNOWN);
+		if (!res) {
+			break;
+		}
+		ctx->pos++;
+	}
+
+
+	// res = dir_emit_dots(dir, ctx);
+	// if (!res) {
+	// 	ret = -EINVAL;
+	// 	goto iterate_end;
+	// }
+
+	brelse(bh);
+iterate_end:
+	return ret;
 }
 
 ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len, loff_t *ppos)
@@ -161,6 +223,7 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto fill_super_release_both;
 	}
 
+	root_inode->i_ino = PANTRYFS_ROOT_INODE_NUMBER;
 	root_inode->i_mode = 0777 | S_IFDIR; // make root drwx-rwx-rwx
 	root_inode->i_op = &pantryfs_inode_ops;
 	root_inode->i_fop = &pantryfs_dir_ops;
@@ -182,9 +245,6 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	root_inode->i_sb = sb; // is this the right sb?
 
 
-	pr_info("%lu\n", pfs_root_inode->file_size);
-	pr_info("%hi\n", pfs_root_inode->mode);
-	pr_info("%hi\n", root_inode->i_mode);
 
 fill_super_release_both:
 	brelse(buf_heads.i_store_bh);
