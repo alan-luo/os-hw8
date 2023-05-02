@@ -12,6 +12,8 @@
 #include "pantryfs_sb.h"
 #include "pantryfs_sb_ops.h"
 
+#define PFS_DENTRY_SIZE sizeof(struct pantryfs_dir_entry)
+
 /* P3: implement `iterate()` */
 int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 {
@@ -27,11 +29,8 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 
 	// stuff for iterating through data block
 	struct pantryfs_dir_entry *pfs_dentry;
-	size_t DENTRY_SIZE;
 	int i;
 	int res;
-
-	DENTRY_SIZE = sizeof(struct pantryfs_dir_entry);
 
 	/* check that ctx-pos isn't too big */
 	if (ctx->pos > PFS_MAX_CHILDREN + 2)
@@ -69,7 +68,7 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 
 	/* read through data buf dentries */
 	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
-		pfs_dentry = (struct pantryfs_dir_entry *) data_buf + (i * DENTRY_SIZE);
+		pfs_dentry = (struct pantryfs_dir_entry *) data_buf + (i * PFS_DENTRY_SIZE);
 
 		// This flag is sufficent to check for
 		// * A) if the dentry is dead / lazily deleted
@@ -152,8 +151,12 @@ therefore we need to malloc some of our own data and attach it to `struct inode`
 
 */
 
-// Tal: "make sure you return NULL if a new entry was created, 
-// and the relevant entry if one was found"
+
+// Tal: You can add error checking if you'd like and return an appropriate error
+// code on failure, but you need to make sure you return NULL if a new entry was
+// created, and the relevant entry if one was found. See the documentation for 
+// d_splice_alias() for more information (Hint: you should use this function in
+// place of d_add() in this instance).
 
 /*
  * Look for dentry in dir.
@@ -168,16 +171,24 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	// setup
 	struct dentry *ret = NULL;
 	struct super_block *sb;
+	// look for dentry from cache
+	// struct dentry *found_dentry;
 	// read directory data from disk
 	struct buffer_head *istore_bh;
 	struct pantryfs_inode *pfs_parent_inode;
-	struct buffer_head *bh;
+	struct buffer_head *pardir_bh;
+	// iterate through parent dir
+	struct pantryfs_dir_entry *pfs_dentry;
+	struct pantryfs_dir_entry *dir_dentry;
+	int i;
+	// store and cache
+	struct inode *dir_dentry_inode;
 	
 
 	sb = parent->i_sb;
 
 	/* check filename length */
-	if (dentry->d_name.len > PANTRYFS_MAX_FILENAME_LENGTH) {
+	if (child_dentry->d_name.len > PANTRYFS_MAX_FILENAME_LENGTH) {
 		pr_err("File name too long");
 		ret = ERR_PTR(-ENAMETOOLONG);
 		goto lookup_end;
@@ -185,7 +196,16 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 
 	/* check if we have the dentry in the cache. if so, return it */
 
-
+	// d_lookup(const struct dentry *parent, const struct qstr *name): 
+	// - if the dentry is found its reference count is incremented and the dentry is returned.
+	// - NULL is returned if the dentry does not exist.
+	// https://elixir.bootlin.com/linux/v5.10.158/source/fs/dcache.c#L2328
+	// found_dentry = d_lookup(parent, child_dentry->d_name);
+	// if (found_dentry) {
+	// 	// store and return the dentry we just found
+	// 	d_add(child_dentry, found_dentry->d_inode);
+	// 	return found_dentry;
+	// }
 
 	/* otherwise...*/
 
@@ -194,7 +214,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
 	if (!istore_bh) {
 		pr_err("Could not read inode block\n");
-		ret = -EIO;
+		ret = ERR_PTR(-EIO);
 		goto lookup_end;
 	}
 
@@ -202,14 +222,44 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	pfs_parent_inode = (struct pantryfs_inode *) 
 		istore_bh->b_data + parent->i_ino * sizeof(struct pantryfs_inode);
 
-
 	/* read directory block from disk */
-	bh = sb_bread(sb);
+	pardir_bh = sb_bread(sb, pfs_parent_inode->data_block_number);
+	if (!pardir_bh) {
+		pr_err("Could not read pardir block\n");
+		ret = ERR_PTR(-EIO);
+		goto lookup_end;
+	}
 
 	/* look for dentry in data block */
+	dir_dentry = NULL;
+	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
+		pfs_dentry = (struct pantryfs_dir_entry *) pardir_bh + (i * PFS_DENTRY_SIZE);
 
-	/* if we found it, cache the dentry */
+		if (!pfs_dentry->active)
+			continue;
 
+		// if we found a match
+		if(!strncmp(pfs_dentry->filename, child_dentry->d_name.name, 
+				PANTRYFS_FILENAME_BUF_SIZE)) {
+			dir_dentry = pfs_dentry;
+			break;	
+		}
+	}
+	// if no match was found
+	if (!dir_dentry) 
+		goto lookup_release;
+	
+	// otherwise...
+
+	/* store and cache the entry we just found */
+
+	// get inode information
+	dir_dentry_inode = iget_locked(sb, dir_dentry->inode_no);
+
+	// now finally add it
+	d_add(child_dentry, dir_dentry_inode);
+
+lookup_release:
 	brelse(istore_bh);
 lookup_end:
 	return ret;
