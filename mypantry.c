@@ -479,7 +479,7 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 	/* update inode nlinks */
 
 	// if the file isn't going to be removed
-	if (dentry_inode->i_nlink > 0) {
+	if (dentry_inode->i_nlink > 1) {
 		// first change the node itself
 		drop_nlink(dentry_inode);
 		// now write to the inode store
@@ -911,6 +911,8 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 	int i;
 	struct pantryfs_dir_entry *pfs_dentry;
 
+	int n_active = 0;
+
 
 	/* get istore */
 	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
@@ -920,6 +922,9 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 	}
 
 	/* if the directory is not empty, fail */	
+	pr_info("n links: %d", dir->i_nlink);
+	pr_info("datablock: %lu", PFS_datablock_no_from_inode(istore_bh, dir));
+
 	if (dir->i_nlink > 2)
 		return -ENOTEMPTY;
 	bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, dir));
@@ -930,9 +935,16 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 	}
 	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
 		pfs_dentry = PFS_dentry_from_dirblock(bh, i);
-		if (pfs_dentry->active)
-			return -ENOTEMPTY;
+		pr_info("active %d (%s) #%u: %d", i, pfs_dentry->filename, pfs_dentry->inode_no, pfs_dentry->active);
+
+		if (pfs_dentry->active) {
+			n_active++;
+		}
 	}
+
+	if (n_active > 1)
+		return -ENOTEMPTY;
+	pr_info("\n");
 	
 	brelse(bh);
 rmdir_release:
