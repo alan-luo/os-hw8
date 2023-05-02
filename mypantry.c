@@ -90,11 +90,22 @@ void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, 
 
 	db_no = PFS_datablock_no_from_inode(istore_bh, inode);
 
+
+	pr_info("removing inode:");
+	pr_info("ino: %lu", ino);
+	pr_info("dbno: %lu", db_no);
+	pr_info("\n");
+
+	if (db_no == 0) {
+		pr_info("already removed\n");
+		return;
+	}
+
 	// Unset bit vectors in sb
 	pantry_sb = (struct pantryfs_super_block *) sb_bh->b_data;
 
 	CLEARBIT(pantry_sb->free_inodes, ino);
-	CLEARBIT(pantry_sb->free_inodes, db_no);
+	CLEARBIT(pantry_sb->free_data_blocks, db_no);
 
 	mark_buffer_dirty(sb_bh);
 	sync_dirty_buffer(sb_bh);
@@ -105,6 +116,10 @@ void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, 
 
 	mark_buffer_dirty(istore_bh);
 	sync_dirty_buffer(istore_bh);
+
+	remove_inode_hash(inode);
+	evict(inode);
+	destroy_inode(inode);
 }
 
 /* P3: implement `iterate()` */
@@ -300,8 +315,6 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 		pr_err("Could not find a free inode or data block!");
 		goto create_end;
 	}
-	pr_info("Found this empty inode: %lu", new_ino_no);
-	pr_info("Found this data block: %lu", new_db_no);
 
 	/* 2. Open inode block*/
 	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
@@ -328,6 +341,11 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 		pr_err("Could not find a free dentry");
 		goto create_release_3;
 	}
+
+	pr_info("Found this empty inode: %lu", new_ino_no);
+	pr_info("Found this empty data block: %lu", new_db_no);
+	pr_info("Found this empty dentry: %lu", new_dentry_no);
+
 
 	/* 4. Now, write out all information */
 
@@ -394,6 +412,7 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	pr_info("unlinking: %lu", dentry->d_inode->i_ino);
 	pr_info("parent: %lu", dir->i_ino);
+	pr_info("\n");
 
 	/* read istore block */
 	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
@@ -430,31 +449,33 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	/* update inode nlinks */
 
-	// first change the node itself
-	drop_nlink(dentry_inode);
-	mark_inode_dirty(dentry_inode);
+	// if the file isn't going to be removed
+	if (dentry_inode->i_nlink > 0) {
+		// first change the node itself
+		drop_nlink(dentry_inode);
+		// now write to the inode store
+		mark_inode_dirty(dentry_inode);
 
-	// now write to the inode store
-	dentry_pfs_inode = PFS_inode_from_istore(dir_bh, dentry_inode->i_ino);
-	dentry_pfs_inode->nlink--;
+		dentry_pfs_inode = PFS_inode_from_istore(dir_bh, dentry_inode->i_ino);
+		dentry_pfs_inode->nlink--;
 
-	mark_buffer_dirty(buf_heads.i_store_bh);
-	sync_dirty_buffer(buf_heads.i_store_bh);
-
-	/* if inode nlinks is zero, do a hard delete (write to relevant blocks) */
-	if (dentry_inode->i_nlink != 0)
-		goto unlink_release_2;
-
-	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
-	if (!buf_heads.sb_bh) {
-		pr_err("Could not read super block");
-		ret = -EIO;
-		goto unlink_release_3;
-	}
-	PFS_remove_inode(buf_heads.sb_bh, buf_heads.i_store_bh, dentry_inode);
+		mark_buffer_dirty(buf_heads.i_store_bh);
+		sync_dirty_buffer(buf_heads.i_store_bh);
+	} else {
+		buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+		if (!buf_heads.sb_bh) {
+			pr_err("Could not read super block");
+			ret = -EIO;
+			goto unlink_release_3;
+		}
+		d_delete(dentry);
+		// dentry_kill(dentry);
+		PFS_remove_inode(buf_heads.sb_bh, buf_heads.i_store_bh, dentry_inode);
 
 unlink_release_3:
-	brelse(buf_heads.sb_bh);
+		brelse(buf_heads.sb_bh);
+	}
+
 unlink_release_2:
 	brelse(dir_bh);
 unlink_release:
@@ -510,6 +531,7 @@ void pantryfs_evict_inode(struct inode *inode)
 	struct pantryfs_sb_buffer_heads buf_heads;
 
 	pr_info("evicting: %lu", inode->i_ino);
+	pr_info("\n");
 
 	// <------ begin TA code ----->
 	/* Required to be called by VFS. If not called, evict() will BUG out.*/
@@ -889,6 +911,8 @@ static int pantryfs_init(void)
 		pr_info("Successfully registered mypantryfs\n");
 	else
 		pr_err("Failed to register mypantryfs. Error:[%d]", ret);
+
+	pr_info("PFS_MAX_CHILDREN: %u", PFS_MAX_CHILDREN);
 
 	return ret;
 }
