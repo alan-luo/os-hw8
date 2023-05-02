@@ -160,7 +160,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		unsigned int flags)
 {
 	// setup
-	// struct dentry *ret = NULL;
+	struct dentry *ret = NULL;
 	struct super_block *sb;
 	// look for dentry from cache
 	// struct dentry *found_dentry;
@@ -173,8 +173,8 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	struct pantryfs_dir_entry *dir_dentry;
 	int i;
 	// store and cache
-	struct inode *dir_dentry_inode;
-	struct pantryfs_inode *dir_dentry_pfs_inode;
+	struct inode *dd_inode;
+	struct pantryfs_inode *dd_pfs_inode;
 	
 	sb = parent->i_sb;
 
@@ -184,8 +184,8 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	/* check filename length */
 	if (child_dentry->d_name.len > PANTRYFS_MAX_FILENAME_LENGTH) {
 		pr_err("File name too long");
-		// ret = ERR_PTR(-ENAMETOOLONG);
-		return NULL;
+		ret = ERR_PTR(-ENAMETOOLONG);
+		goto lookup_end;
 	}
 
 	/* check if we have the dentry in the cache. if so, return it */
@@ -208,8 +208,8 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
 	if (!istore_bh) {
 		pr_err("Could not read inode block\n");
-		// ret = ERR_PTR(-EIO);
-		return NULL;
+		ret = ERR_PTR(-EIO);
+		goto lookup_end;
 	}
 
 	// - read PFS inode entry from inode #
@@ -219,9 +219,8 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	pardir_bh = sb_bread(sb, pfs_parent_inode->data_block_number);
 	if (!pardir_bh) {
 		pr_err("Could not read pardir block\n");
-		// ret = ERR_PTR(-EIO);
-		// goto lookup_end;
-		return NULL;
+		ret = ERR_PTR(-EIO);
+		goto lookup_end;
 	}
 
 	/* look for dentry in data block */
@@ -256,33 +255,38 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	/* store and cache the entry we just found */
 
 	// get inode information
-	dir_dentry_inode = iget_locked(sb, dir_dentry->inode_no);
-	dir_dentry_pfs_inode = (struct pantryfs_inode *) 
+	dd_inode = iget_locked(sb, le64_to_cpu(dir_dentry->inode_no));
+	if(!dd_inode) {
+		pr_err("Could not allocate dir dentry inode")	;
+		ret = ERR_PTR(-ENOMEM);
+		goto lookup_release;
+	}
+	dd_pfs_inode = (struct pantryfs_inode *) 
 		(istore_bh->b_data + (dir_dentry->inode_no - 1) * sizeof(struct pantryfs_inode));
-	// if(!root_inode)...
-	if (dir_dentry_inode->i_state & I_NEW) {
-		dir_dentry_inode->i_sb = sb;
-		dir_dentry_inode->i_ino = dir_dentry->inode_no;
-		dir_dentry_inode->i_op = &pantryfs_inode_ops;	
-		// dir_dentry_inode->i_mode = dir_dentry_pfs_inode->mode;
+	if (dd_inode->i_state & I_NEW) {
+		dd_inode->i_sb = sb;
+		dd_inode->i_ino = dir_dentry->inode_no;
+		dd_inode->i_op = &pantryfs_inode_ops;	
+		dd_inode->i_mode = dd_pfs_inode->mode;
+		pr_info("%lu, %lu", dd_inode->i_mode, dd_pfs_inode->mode);
 
-		if (dir_dentry_pfs_inode->mode & S_IFDIR) {
-			dir_dentry_inode->i_fop = &pantryfs_dir_ops;
-			dir_dentry_inode->i_mode = 0777 | S_IFDIR;
+		if (dd_pfs_inode->mode & S_IFDIR) {
+			dd_inode->i_fop = &pantryfs_dir_ops;
+			dd_inode->i_mode = 0777 | S_IFDIR;
 		} else {
-			dir_dentry_inode->i_fop = &pantryfs_file_ops;
-			dir_dentry_inode->i_mode = 0666 | S_IFREG;
+			dd_inode->i_fop = &pantryfs_file_ops;
+			dd_inode->i_mode = 0666 | S_IFREG;
 		}
-		pr_info("%lu, %lu", dir_dentry_inode->i_mode, dir_dentry_pfs_inode->mode);
-		unlock_new_inode(dir_dentry_inode);
+		pr_info("%lu, %lu", dd_inode->i_mode, dd_pfs_inode->mode);
+		unlock_new_inode(dd_inode);
 	}
 	// now finally add it
-	d_add(child_dentry, dir_dentry_inode);
+	d_add(child_dentry, dd_inode);
 
 lookup_release:
 	brelse(istore_bh);
 lookup_end:
-	return NULL;
+	return ret;
 }
 
 int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
