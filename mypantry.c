@@ -136,9 +136,27 @@ read_end:
 	return ret;
 }
 
+/* P5: also implement this */
+
+// Helpful: generic_file_llseek https://elixir.bootlin.com/linux/v5.10.158/source/fs/read_write.c#L144
 loff_t pantryfs_llseek(struct file *filp, loff_t offset, int whence)
 {
-	return -EPERM;
+	struct inode *inode = filp->f_mapping->host;
+	loff_t off;
+
+	if (whence == SEEK_SET)	{
+		off = offset;
+	} else if (whence == SEEK_CUR) {
+		off = filp->f_pos + offset;
+	} else if (whence == SEEK_END) {
+		off = inode->i_size + offset;
+	} else {
+		pr_info("llseek whence invalid");
+		return -EINVAL;
+	}
+
+	filp->f_pos = off;
+	return off;
 }
 
 int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, bool excl)
