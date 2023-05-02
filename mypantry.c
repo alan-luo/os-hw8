@@ -118,8 +118,7 @@ void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, 
 	sync_dirty_buffer(istore_bh);
 
 	remove_inode_hash(inode);
-	evict(inode);
-	destroy_inode(inode);
+	iput(inode);
 }
 
 /* P3: implement `iterate()` */
