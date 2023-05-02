@@ -118,7 +118,6 @@ void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, 
 	sync_dirty_buffer(istore_bh);
 
 	remove_inode_hash(inode);
-	iput(inode);
 }
 
 /* P3: implement `iterate()` */
@@ -468,7 +467,6 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 			goto unlink_release_3;
 		}
 		d_delete(dentry);
-		// dentry_kill(dentry);
 		PFS_remove_inode(buf_heads.sb_bh, buf_heads.i_store_bh, dentry_inode);
 
 unlink_release_3:
