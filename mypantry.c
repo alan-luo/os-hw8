@@ -256,6 +256,7 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 	}
 	mark_buffer_dirty(bh);
 
+	*ppos += amt_to_write;
 	ret = amt_to_write;
 
 write_release:
