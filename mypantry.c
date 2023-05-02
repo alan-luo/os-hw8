@@ -96,7 +96,7 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	/* retrieve the dir inode from the file struct */
 	dir_inode = file_inode(dir);
 
-	/* read the root dir inode from disk */
+	/* read the dir datablock from disk */
 	sb = dir_inode->i_sb;
 	bh = sb_bread(sb, PFS_datablock_no_from_inode(dir_inode));
 	if (!bh) {
@@ -118,7 +118,7 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 			continue;
 
 		res = dir_emit(ctx, pfs_dentry->filename, 2 * PANTRYFS_FILENAME_BUF_SIZE,
-			pfs_dentry->inode_no, DT_UNKNOWN);
+			pfs_dentry->inode_no, S_DT(dir_inode->i_mode));
 		if (!res)
 			break;
 
