@@ -95,10 +95,10 @@ ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len, loff_t *p
 	size_t amt_to_read;
 
 	/* check if offset is valid */
-	if (*offset == PFS_BLOCK_SIZE)
+	if (*ppos == PFS_BLOCK_SIZE)
 		return 0;
-	else if (*offset > PFS_BLOCK_SIZE) {
-		pr_info("Offset larger than 4096 bytes (block size)");
+	else if (*ppos > PFS_BLOCK_SIZE) {
+		pr_err("Offset larger than 4096 bytes (block size)");
 		return -EINVAL;
 	}
 
@@ -114,19 +114,19 @@ ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len, loff_t *p
 	}
 
 	/* copy data from data block */
-	if (len + *offset > PFS_BLOCK_SIZE)
-		amt_to_read = PFS_BLOCK_SIZE - *offset;
+	if (len + *ppos > PFS_BLOCK_SIZE)
+		amt_to_read = PFS_BLOCK_SIZE - *ppos;
 	else
 		amt_to_read = len;
 
 
-	if (copy_to_user(buf, bh->b_data + *offset, amt_to_read)) {
+	if (copy_to_user(buf, bh->b_data + *ppos, amt_to_read)) {
 		pr_err("Copy_to_user failed");
 		ret = -EFAULT;
 		goto read_release;
 	}
 
-	*offset	+= amt_to_read;
+	*ppos += amt_to_read;
 	ret = amt_to_read;
 
 
@@ -194,9 +194,6 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	struct pantryfs_inode *dd_pfs_inode;
 	
 	sb = parent->i_sb;
-
-	pr_info("parent inode #: %u", parent->i_ino);
-	pr_info("child dentry name: %s", child_dentry->d_name.name);
 
 	/* check filename length */
 	if (child_dentry->d_name.len > PANTRYFS_MAX_FILENAME_LENGTH) {
