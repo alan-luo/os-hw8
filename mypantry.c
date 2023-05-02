@@ -240,6 +240,7 @@ int pantryfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 	disk_inode->file_size = inode->i_size;
 
 	mark_buffer_dirty(istore_bh);
+	sync_dirty_buffer(istore_bh);
 
 	/* clean up */
 	brelse(istore_bh);
@@ -254,9 +255,10 @@ void pantryfs_evict_inode(struct inode *inode)
 	clear_inode(inode);
 }
 
+/* P7: implement fsync */
 int pantryfs_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 {
-	return -EPERM;
+	return generic_file_fsync(filp, start, end, datasync);
 }
 
 /* P7: implement write */
