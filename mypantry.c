@@ -68,8 +68,7 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	memcpy(data_buf, bh->b_data, PFS_BLOCK_SIZE);
 
 	/* read through data buf dentries */
-	// for (i = 0; i < PFS_MAX_CHILDREN; i++) {
-	for (i = 0; i < 1; i++) {
+	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
 		pfs_dentry = (struct pantryfs_dir_entry *) data_buf + (i * DENTRY_SIZE);
 
 		// This flag is sufficent to check for
