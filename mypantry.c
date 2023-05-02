@@ -108,7 +108,6 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct pantryfs_super_block *pantry_sb;
 
 	struct inode *root_inode;
-	struct dentry *root_dentry;
 
 
 	/* initialize super block */
@@ -125,7 +124,7 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto fill_super_end;
 	}
 
-	pantry_sb = (struct pantryfs_super_block *) sb_bh->b_data;
+	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
 
 	// - check magic number
 	if (sb->s_magic != pantry_sb->magic) {
@@ -144,14 +143,14 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	
 	/* create VFS inode for root directory */
 	root_inode = iget_locked(sb, 0);
-	if (!inode) {
+	if (!root_inode) {
 		pr_err("Could not allocate root inode\n");
 		ret = -ENOMEM;
 		goto fill_super_release_both;
 	}
 	// Not entirely sure if this is necessary but I added it to stay consistent
 	// with kernel code (which pretty much always checks this)
-	if (!(inode->i_state & I_NEW)) {
+	if (!(root_inode->i_state & I_NEW)) {
 		pr_err("Something weird happened");
 		ret = -EPERM;
 		goto fill_super_release_both;
