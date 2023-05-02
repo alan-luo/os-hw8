@@ -15,15 +15,14 @@
 #define PFS_DENTRY_SIZE sizeof(struct pantryfs_dir_entry)
 #define PFS_INODE_SIZE sizeof(struct pantryfs_inode)
 
-uint64_t PFS_datablock_no_from_inode(struct buffer_head *istore_bh, struct inode *inode) {
-	struct pantryfs_inode *disk_inode = (struct pantryfs_inode *)
-		(istore_bh->b_data + (inode->i_ino - 1) * PFS_INODE_SIZE);
-	return disk_inode->data_block_number;
-}
 /* Helper function to get a pointer from the istore buffer for a particular ino # */
 struct pantryfs_inode *PFS_inode_from_istore(struct buffer_head *istore_bh, unsigned long ino) {
 	return (struct pantryfs_inode *) 
 		(istore_bh->b_data + (ino - 1) * PFS_INODE_SIZE);
+}
+uint64_t PFS_datablock_no_from_inode(struct buffer_head *istore_bh, struct inode *inode) {
+	struct pantryfs_inode *disk_inode = PFS_inode_from_istore(istore_bh, inode->i_ino);
+	return disk_inode->data_block_number;
 }
 /* Helper function to get a pointer to a particular dentry given:
 - directory data block
@@ -98,6 +97,10 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	int i;
 	int res;
 
+	/* retrieve the dir inode from the file struct */
+	dir_inode = file_inode(dir);
+	sb = dir_inode->i_sb;
+
 	/* check that ctx-pos isn't too big */
 	if (ctx->pos > PFS_MAX_CHILDREN + 2)
 		return 0;
@@ -115,11 +118,8 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 		goto iterate_end;
 	}
 
-	/* retrieve the dir inode from the file struct */
-	dir_inode = file_inode(dir);
 
 	/* read the dir datablock from disk */
-	sb = dir_inode->i_sb;
 	bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, dir_inode));
 	if (!bh) {
 		pr_err("Could not read dir block");
@@ -486,7 +486,6 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	struct super_block *sb;
 	// read directory data from disk
 	struct buffer_head *istore_bh;
-	struct pantryfs_inode *pfs_parent_inode;
 	struct buffer_head *pardir_bh;
 	// iterate through parent dir
 	struct pantryfs_dir_entry *pfs_dentry;
@@ -535,9 +534,8 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	}
 
 	// - read PFS inode entry from inode #
-	pfs_parent_inode = PFS_inode_from_istore(istore_bh, parent->i_ino);
 	/* read directory block from disk */
-	pardir_bh = sb_bread(sb, pfs_parent_inode->data_block_number);
+	pardir_bh = sb_bread(sb, PFS_datablock_no_from_inode(istore_bh, parent));
 	if (!pardir_bh) {
 		pr_err("Could not read pardir block\n");
 		ret = ERR_PTR(-EIO);
