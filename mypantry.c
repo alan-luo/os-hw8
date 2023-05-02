@@ -37,6 +37,11 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	if (ctx->pos > PFS_MAX_CHILDREN + 2)
 		return 0;
 
+	/* try to emit . and .. */
+	res = dir_emit_dots(dir, ctx);
+	if (!res)
+		return 0;
+
 	/* retrieve the dir inode from the file struct */
 	dir_inode = file_inode(dir);
 
@@ -63,7 +68,8 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	memcpy(data_buf, bh->b_data, PFS_BLOCK_SIZE);
 
 	/* read through data buf dentries */
-	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
+	// for (i = 0; i < PFS_MAX_CHILDREN; i++) {
+	for (i = 0; i < 1; i++) {
 		pfs_dentry = (struct pantryfs_dir_entry *) data_buf + (i * DENTRY_SIZE);
 
 		// This flag is sufficent to check for
@@ -73,20 +79,16 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 		if (!pfs_dentry->active)
 			continue;
 
-		res = dir_emit(ctx, pfs_dentry->filename, PANTRYFS_FILENAME_BUF_SIZE,
+		res = dir_emit(ctx, pfs_dentry->filename, 2 * PANTRYFS_FILENAME_BUF_SIZE,
 			pfs_dentry->inode_no, DT_UNKNOWN);
 		if (!res)
 			break;
 
 		ctx->pos++;
 	}
+	// if we've made it to the end of the loop, make sure we terminate next time
+	ctx->pos = PFS_MAX_CHILDREN + 3;
 
-
-	// res = dir_emit_dots(dir, ctx);
-	// if (!res) {
-	// 	ret = -EINVAL;
-	// 	goto iterate_end;
-	// }
 
 	brelse(bh);
 iterate_free:
