@@ -3,6 +3,7 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 
 #include "pantryfs_inode.h"
 #include "pantryfs_inode_ops.h"
@@ -22,15 +23,19 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	struct inode *dir_inode;
 	struct super_block *sb;
 	struct buffer_head *bh;
-	char data_buf[PFS_BLOCK_SIZE];
+	char *data_buf;
 
 	// stuff for iterating through data block
 	struct pantryfs_dir_entry *pfs_dentry;
 	size_t DENTRY_SIZE;
-	int i, j;
+	int i;
 	int res;
 
 	DENTRY_SIZE = sizeof(struct pantryfs_dir_entry);
+
+	/* check that ctx-pos isn't too big */
+	if (ctx->pos > PFS_MAX_CHILDREN + 2)
+		return 0;
 
 	/* retrieve the dir inode from the file struct */
 	dir_inode = file_inode(dir);
@@ -42,14 +47,24 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	}
 
 	/* read the root dir inode from disk */
+	data_buf = kmalloc(PFS_BLOCK_SIZE, GFP_KERNEL);
+	if (!data_buf) {
+		pr_err("Malloc failed!");
+		ret = -ENOMEM;
+		goto iterate_end;
+	}
 	sb = dir_inode->i_sb;
-	dir_inode->i_private;
 	bh = sb_bread(sb, PANTRYFS_ROOT_DATABLOCK_NUMBER);
+	if (!bh) {
+		pr_err("Could not read dir block");
+		ret = -EIO;
+		goto iterate_free;
+	}
 	memcpy(data_buf, bh->b_data, PFS_BLOCK_SIZE);
 
 	/* read through data buf dentries */
 	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
-		pfs_dentry = (struct pantryfs_dir_entry *) buf[i * DENTRY_SIZE];
+		pfs_dentry = (struct pantryfs_dir_entry *) data_buf + (i * DENTRY_SIZE);
 
 		// This flag is sufficent to check for
 		// * A) if the dentry is dead / lazily deleted
@@ -60,9 +75,9 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 
 		res = dir_emit(ctx, pfs_dentry->filename, PANTRYFS_FILENAME_BUF_SIZE,
 			pfs_dentry->inode_no, DT_UNKNOWN);
-		if (!res) {
+		if (!res)
 			break;
-		}
+
 		ctx->pos++;
 	}
 
@@ -74,6 +89,8 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	// }
 
 	brelse(bh);
+iterate_free:
+	kfree(data_buf);
 iterate_end:
 	return ret;
 }
