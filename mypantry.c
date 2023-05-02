@@ -13,14 +13,24 @@
 #include "pantryfs_sb_ops.h"
 
 #define PFS_DENTRY_SIZE sizeof(struct pantryfs_dir_entry)
+#define PFS_INODE_SIZE sizeof(struct pantryfs_inode)
 
-uint64_t PFS_datablock_no_from_inode(struct inode *inode) {
-	return PANTRYFS_ROOT_DATABLOCK_NUMBER + (inode->i_ino - 1);
+uint64_t PFS_datablock_no_from_inode(struct buffer_head *istore_bh, struct inode *inode) {
+	struct pantryfs *disk_inode = (struct pantryfs_inode *)
+		(istore_bh->b_data + (inode->i_ino - 1) * PFS_INODE_SIZE);
+	return disk_inode->data_block_number;
 }
 /* Helper function to get a pointer from the istore buffer for a particular ino # */
 struct pantryfs_inode *PFS_inode_from_istore(struct buffer_head *istore_bh, unsigned long ino) {
 	return (struct pantryfs_inode *) 
-		(istore_bh->b_data + (ino - 1) * sizeof(struct pantryfs_inode));
+		(istore_bh->b_data + (ino - 1) * PFS_INODE_SIZE);
+}
+/* Helper function to get a pointer to a particular dentry given:
+- directory data block
+- index */
+struct pantryfs_dir_entry *PFS_dentry_from_dirblock(struct buffer_head *dir_block, unsigned int i) {
+	return (struct pantryfs_dir_entry *)
+		(pardir_bh->b_data + (i * PFS_DENTRY_SIZE));
 }
 
 /* P6: helper function used to create new inodes in a consistent way */
@@ -208,8 +218,11 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	// for reading super block
 	struct pantryfs_super_block *pantry_sb;
 	// new inode info
-	int new_ino_no, new_db_no;
+	unsigned long new_ino_no, new_db_no;
 	struct pantryfs_inode *pfs_new_inode;
+	// for opening parent data block
+	struct buffer_head *par_buf;
+	int new_dentry_no;
 
 	/* 1. Open super block and tell it that a new file and inode have been created */
 	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
@@ -270,11 +283,32 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	mark_buffer_dirty(buf_heads.i_store_bh);
 	sync_dirty_buffer(buf_heads.i_store_bh);
 
+	/* 3. Open data block for parent and add dentry */
+	par_buf = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, parent));
+	if (!par_buf) {
+		pr_err("Could not read parent dir datablock");
+		ret = -EIO;
+		goto create_release_2;
+	}
 
-	/* 3. Open data block for newly_created file and zero it out */
+	// Get first empty dentry in dirblock
+	for (new_dentry_no = 0; new_dentry_no < PFS_MAX_CHILDREN; new_dentry_no++) {
+		pfs_dentry = PFS_dentry_from_dirblock(pardir_bh, new_dentry_no);
+		if (!pfs_dentry->active) break;
+	}
+	if (new_dentry_no == PFS_MAX_CHILDREN) {
+		pr_err("Could not find a free dentry");
+		goto create_release_3;
+	}
+	pfs_dentry->inode_no = new_ino_no;
+	pfs_dentry->active = 1;
+	strncpy(pfs_dentry->filename, dentry->d_name.name, sizeof(pfs_dentry->filename));
 
+	/* 4. Open data block for newly_created file and zero it out */
 
-
+create_release_3:
+	brelse(par_buf);
+create_release_2:
 	brelse(buf_heads.i_store_bh);
 create_release:
 	brelse(buf_heads.sb_bh);
@@ -475,8 +509,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	/* look for dentry in data block */
 	dir_dentry = NULL;
 	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
-		pfs_dentry = (struct pantryfs_dir_entry *)
-			(pardir_bh->b_data + (i * PFS_DENTRY_SIZE));
+		pfs_dentry = PFS_dentry_from_dirblock(pardir_bh, i);
 
 		if (!pfs_dentry->active)
 			continue;
