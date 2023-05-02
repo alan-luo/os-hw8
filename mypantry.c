@@ -138,10 +138,81 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 	return -EPERM;
 }
 
+/*
+sb_bread takes in data block #. where to get data block #?
+
+- if parent is the root node, we just use the const ROOT_DATABLOCK #
+- if parent is not the root node, how to get it??
+
+we NEED the data block # of `parent` for SURE
+
+`struct inode` doesn't have any built-in fields for our own data
+
+therefore we need to malloc some of our own data and attach it to `struct inode`
+
+*/
+
+// Tal: "make sure you return NULL if a new entry was created, 
+// and the relevant entry if one was found"
+
+/*
+ * Look for dentry in dir.
+ * Fill dentry with NULL if not in dir, with the corresponding inode if found.
+ * Returns NULL on success.
+ */
+
+/* P4: implement subdir lookup */
 struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry,
 		unsigned int flags)
 {
-	return NULL;
+	// setup
+	struct dentry *ret = NULL;
+	struct super_block *sb;
+	// read directory data from disk
+	struct buffer_head *istore_bh;
+	struct pantryfs_inode *pfs_parent_inode;
+	struct buffer_head *bh;
+	
+
+	sb = parent->i_sb;
+
+	/* check filename length */
+	if (dentry->d_name.len > PANTRYFS_MAX_FILENAME_LENGTH) {
+		pr_err("File name too long");
+		ret = ERR_PTR(-ENAMETOOLONG);
+		goto lookup_end;
+	}
+
+	/* check if we have the dentry in the cache. if so, return it */
+
+
+
+	/* otherwise...*/
+
+	/* get datablock number from inode number */
+	// - read inode store from disk
+	istore_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!istore_bh) {
+		pr_err("Could not read inode block\n");
+		ret = -EIO;
+		goto lookup_end;
+	}
+
+	// - read PFS inode entry from inode #
+	pfs_parent_inode = (struct pantryfs_inode *) 
+		istore_bh->b_data + parent->i_ino * sizeof(struct pantryfs_inode);
+
+
+	/* read directory block from disk */
+	bh = sb_bread(sb);
+
+	/* look for dentry in data block */
+
+	/* if we found it, cache the dentry */
+
+	brelse(istore_bh);
+lookup_end:
+	return ret;
 }
 
 int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
@@ -191,9 +262,8 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct inode *root_inode;
 
 	// P3: for reading inodes from PantryFS
-	char inode_buf[sizeof(struct pantryfs_inode)];
+	char *inode_buf;
 	struct pantryfs_inode *pfs_root_inode;
-
 
 	/* initialize super block */
 	sb->s_magic = PANTRYFS_MAGIC_NUMBER;
@@ -257,6 +327,8 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	/* P3: read PantryFS root inode from disk and associate it with root_inode */
 	// Not sure if we strictly have to do this - but I don't know if we can guarantee
 	// that buffer heads will stick around, so this seems reasonable
+	inode_buf = kmalloc(sizeof(struct pantryfs_inode), GFP_KERNEL);
+
 	memcpy(inode_buf, buf_heads.i_store_bh->b_data, sizeof(struct pantryfs_inode));
 	pfs_root_inode = (struct pantryfs_inode *) inode_buf;
 	root_inode->i_private = pfs_root_inode;
@@ -291,6 +363,8 @@ static struct dentry *pantryfs_mount(struct file_system_type *fs_type, int flags
 
 static void pantryfs_kill_superblock(struct super_block *sb)
 {
+	// make sure to free i_sb from the root node
+
 	kill_block_super(sb);
 	pr_info("mypantryfs superblock destroyed. Unmount successful.\n");
 }
