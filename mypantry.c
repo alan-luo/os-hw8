@@ -130,8 +130,6 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	// setup
 	struct dentry *ret = NULL;
 	struct super_block *sb;
-	// look for dentry from cache
-	// struct dentry *found_dentry;
 	// read directory data from disk
 	struct buffer_head *istore_bh;
 	struct pantryfs_inode *pfs_parent_inode;
@@ -157,6 +155,11 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	}
 
 	/* check if we have the dentry in the cache. if so, return it */
+
+	// Testing indicates that we don't need this (subsequent calls automatically
+	// cached) but I don't know why.
+
+	// struct dentry *found_dentry;
 
 	// d_lookup(const struct dentry *parent, const struct qstr *name): 
 	// - if the dentry is found its reference count is incremented and the dentry is returned.
