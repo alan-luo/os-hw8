@@ -787,14 +787,16 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	// basic
 	int ret = 0;
-	struct super_block *sb = parent->i_sb;
+	struct super_block *sb = dir->i_sb;
 	// buffers
 	struct buffer_head *par_bh;
 	struct pantryfs_sb_buffer_heads buf_heads;
 	// new i_no, db_no, dentry
 	struct i_db_no new_i_db_no;
 	struct pantryfs_dir_entry *pfs_dentry;
-
+	// writing information
+	struct pantryfs_super_block *pantry_sb;
+	struct pantryfs_inode *pfs_new_inode;
 
 	/* 1. Open necessary buffers */
 
@@ -809,14 +811,14 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	if (!buf_heads.i_store_bh) {
 		pr_err("Could not read i store block");
 		ret = -EIO;
-		goto create_release;
+		goto mkdir_release;
 	}
 
-	par_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, parent));
+	par_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, dir));
 	if (!par_bh) {
 		pr_err("Could not read parent dir datablock");
 		ret = -EIO;
-		goto create_release_2;
+		goto mkdir_release_2;
 	}
 
 	/* 2. Find empty i_no, db_no, dentry */
@@ -849,10 +851,10 @@ int pantryfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	pfs_new_inode->data_block_number = new_i_db_no.db_no;
 	pfs_new_inode->file_size = PFS_BLOCK_SIZE;
 
-	pfs_new_inode->uid = parent->i_uid.val;
-	pfs_new_inode->gid = parent->i_gid.val;
+	pfs_new_inode->uid = dir->i_uid.val;
+	pfs_new_inode->gid = dir->i_gid.val;
 
-	pfs_new_inode->i_atime = current_time(parent);
+	pfs_new_inode->i_atime = current_time(dir);
 	pfs_new_inode->i_mtime = pfs_new_inode->i_atime;
 	pfs_new_inode->i_ctime = pfs_new_inode->i_atime;
 
