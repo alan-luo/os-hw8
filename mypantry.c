@@ -1003,12 +1003,129 @@ link_end:
 
 int pantryfs_symlink(struct inode *dir, struct dentry *dentry, const char *symname)
 {
-	return -EPERM;
+	// basic
+	int ret = 0;
+	struct super_block *sb = dir->i_sb;
+	struct pantryfs_sb_buffer_heads buf_heads;
+	// for reading super block
+	struct pantryfs_super_block *pantry_sb;
+	// new inode info
+	struct i_db_no new_i_db_no;
+	struct pantryfs_inode *pfs_new_inode;
+	// for opening parent data block
+	struct buffer_head *par_bh;
+	struct pantryfs_dir_entry *pfs_dentry;
+	// open symlink data block
+	struct buffer_head *ln_bh;
+
+	/* 1. Open super block and tell it that a new file and inode have been created */
+	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+	if (!buf_heads.sb_bh) {
+		pr_err("Could not read super block");
+		ret = -EIO;
+		goto symlink_end;
+	}
+
+	new_i_db_no = PFS_get_free_i_db_no(buf_heads.sb_bh);
+
+	if (new_i_db_no.db_no == -1 || new_i_db_no.i_no == -1) {
+		pr_err("Could not find a free inode or data block!");
+		goto symlink_end;
+	}
+
+	/* 2. Open inode block*/
+	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!buf_heads.i_store_bh) {
+		pr_err("Could not read i store block");
+		ret = -EIO;
+		goto symlink_release;
+	}
+
+	/* 3. Open data block for parent and add dentry */
+	par_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, dir));
+	if (!par_bh) {
+		pr_err("Could not read parent dir datablock");
+		ret = -EIO;
+		goto symlink_release_2;
+	}
+
+	// Get first empty dentry in dirblock
+	pfs_dentry = PFS_next_empty_dentry(par_bh);
+	if (pfs_dentry == NULL) {
+		pr_err("Could not find a free dentry");
+		goto symlink_release_3;
+	}
+
+
+	/* 4. Now, write out all information */
+
+	// Write sb - mark inode and datablock entries as used
+	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
+	SETBIT(pantry_sb->free_inodes, new_i_db_no.i_no);
+	SETBIT(pantry_sb->free_data_blocks, new_i_db_no.db_no - 1);
+
+	mark_buffer_dirty(buf_heads.sb_bh);
+	sync_dirty_buffer(buf_heads.sb_bh);
+
+	// Write istore
+	pfs_new_inode = PFS_inode_from_istore(buf_heads.i_store_bh, new_i_db_no.i_no);
+
+	pfs_new_inode->nlink = 1;
+	pfs_new_inode->mode = S_IFLNK | 0777;
+	pfs_new_inode->data_block_number = new_i_db_no.db_no;
+
+	pfs_new_inode->uid = dir->i_uid.val;
+	pfs_new_inode->gid = dir->i_gid.val;
+
+	pfs_new_inode->i_atime = current_time(dir);
+	pfs_new_inode->i_mtime = pfs_new_inode->i_atime;
+	pfs_new_inode->i_ctime = pfs_new_inode->i_atime;
+
+	pfs_new_inode->file_size = strlen(symname) + 1;
+
+	mark_buffer_dirty(buf_heads.i_store_bh);
+	sync_dirty_buffer(buf_heads.i_store_bh);
+
+	// write path to file in data block
+	ln_bh = sb_bread(sb, new_i_db_no.db_no);
+	if (!ln_bh) {
+		pr_err("Could not read parent dir datablock");
+		ret = -EIO;
+		goto symlink_release_4;
+	}
+
+	strcpy(ln_bh->b_data, symname);
+
+	mark_buffer_dirty(ln_bh);
+	sync_dirty_buffer(ln_bh);
+
+
+symlink_release_4:
+	brelse(ln_bh);
+
+	// write dentry
+	pfs_dentry->inode_no = new_i_db_no.i_no;
+	pfs_dentry->active = 1;
+	strncpy(pfs_dentry->filename, dentry->d_name.name, sizeof(pfs_dentry->filename));
+
+	mark_buffer_dirty(par_bh);
+	sync_dirty_buffer(par_bh);
+
+	/* 4. Open data block for newly_created file and zero it out */
+
+symlink_release_3:
+	brelse(par_bh);
+symlink_release_2:
+	brelse(buf_heads.i_store_bh);
+symlink_release:
+	brelse(buf_heads.sb_bh);
+symlink_end:
+	return ret;
 }
 
 const char *pantryfs_get_link(struct dentry *dentry, struct inode *inode, struct delayed_call *done)
 {
-	return ERR_PTR(-EPERM);
+	return inode->i_link;
 }
 
 /**
