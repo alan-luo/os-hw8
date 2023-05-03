@@ -159,7 +159,8 @@ void PFS_remove_inode(struct buffer_head *sb_bh, struct buffer_head *istore_bh, 
 	mark_buffer_dirty(sb_bh);
 	sync_dirty_buffer(sb_bh);
 
-	remove_inode_hash(inode);
+
+	// remove_inode_hash(inode);
 }
 
 /* P3: implement `iterate()` */
@@ -220,7 +221,6 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 		if (!pfs_dentry->active)
 			continue;
 
-		pr_info("%s #%lu: block %u", pfs_dentry->filename, pfs_dentry->inode_no, PFS_inode_from_istore(istore_bh, pfs_dentry->inode_no)->data_block_number);
 		res = dir_emit(ctx, pfs_dentry->filename, 2 * PANTRYFS_FILENAME_BUF_SIZE,
 			pfs_dentry->inode_no, S_DT(dir_inode->i_mode));
 		if (!res)
@@ -444,9 +444,6 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 		goto unlink_end;
 	}
 
-	pr_info("read inode store");
-	pr_info("\n");
-
 	/* read dir data block */
 	dir_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, dir));
 	if (!dir_bh) {
@@ -454,9 +451,6 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 		ret = -EIO;
 		goto unlink_release;
 	}
-
-	pr_info("read data block at idx %u", PFS_datablock_no_from_inode(buf_heads.i_store_bh, dir));
-	pr_info("\n");
 
 	/* update dentry within dir data block */
 	for (i = 0; i < PFS_MAX_CHILDREN; i++) {
@@ -469,8 +463,6 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 		ret = -EFAULT;
 		goto unlink_release_2;
 	}
-	pr_info("found a matching dentry");
-	pr_info("\n");
 
 	pfs_dentry->active = 0;
 
@@ -492,20 +484,12 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 		mark_buffer_dirty(buf_heads.i_store_bh);
 		sync_dirty_buffer(buf_heads.i_store_bh);
 	} else {
-		pr_info("file is being removed");
-		pr_info("\n");
-		buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
-		if (!buf_heads.sb_bh) {
-			pr_err("Could not read super block");
-			ret = -EIO;
-			goto unlink_release_3;
-		}
-		d_delete(dentry);
-		PFS_remove_inode(buf_heads.sb_bh, buf_heads.i_store_bh, dentry_inode);
-
-unlink_release_3:
-		brelse(buf_heads.sb_bh);
+		drop_nlink(dentry_inode);
+		// PFS_remove_inode(buf_heads.sb_bh, buf_heads.i_store_bh, dentry_inode);
+		mark_inode_dirty(dentry_inode);
+		// d_delete(dentry);
 	}
+
 
 unlink_release_2:
 	brelse(dir_bh);
@@ -928,7 +912,6 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 	if (!bh) {
 		pr_err("Could not read from data block");
 		return -EIO;
-		goto rmdir_release;
 	}
 
 	/* if the directory is not empty, fail */	
@@ -945,7 +928,6 @@ int pantryfs_rmdir(struct inode *dir, struct dentry *dentry)
 
 rmdir_release_2:	
 	brelse(bh);
-rmdir_release:
 	brelse(istore_bh);
 
 	if (ret != 0)
