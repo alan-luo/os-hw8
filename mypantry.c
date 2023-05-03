@@ -16,25 +16,31 @@
 #define PFS_INODE_SIZE sizeof(struct pantryfs_inode)
 
 /* Helper function to get a pointer from the istore buffer for a particular ino # */
-struct pantryfs_inode *PFS_inode_from_istore(struct buffer_head *istore_bh, unsigned long ino) {
-	return (struct pantryfs_inode *) 
+struct pantryfs_inode *PFS_inode_from_istore(struct buffer_head *istore_bh, unsigned long ino)
+{
+	return (struct pantryfs_inode *)
 		(istore_bh->b_data + (ino - 1) * PFS_INODE_SIZE);
 }
-uint64_t PFS_datablock_no_from_inode(struct buffer_head *istore_bh, struct inode *inode) {
+uint64_t PFS_datablock_no_from_inode(struct buffer_head *istore_bh, struct inode *inode)
+{
 	struct pantryfs_inode *disk_inode = PFS_inode_from_istore(istore_bh, inode->i_ino);
+
 	return disk_inode->data_block_number;
 }
 /* Helper function to get a pointer to a particular dentry given:
-- directory data block
-- index */
-struct pantryfs_dir_entry *PFS_dentry_from_dirblock(struct buffer_head *dir_bh, unsigned int i) {
+ *- directory data block
+ *- index
+ */
+struct pantryfs_dir_entry *PFS_dentry_from_dirblock(struct buffer_head *dir_bh, unsigned int i)
+{
 	return (struct pantryfs_dir_entry *)
 		(dir_bh->b_data + (i * PFS_DENTRY_SIZE));
 }
 
 /* P6: helper function used to create new inodes in a consistent way */
 // Currently used in fill_super (root inode) and lookup (inode cache)
-struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantryfs_inode *pfs_inode) {
+struct inode *pfs_inode(struct super_block *sb, unsigned long ino, struct pantryfs_inode *pfs_inode)
+{
 	struct inode *inode;
 	int isroot;
 
@@ -234,7 +240,7 @@ loff_t pantryfs_llseek(struct file *filp, loff_t offset, int whence)
 /* P8: create files */
 int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, bool excl)
 {
-	// basic	
+	// basic
 	int ret = 0;
 	struct super_block *sb = parent->i_sb;
 	struct pantryfs_sb_buffer_heads buf_heads;
@@ -320,7 +326,8 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry, umode_t mode, b
 	// Get first empty dentry in dirblock
 	for (new_dentry_no = 0; new_dentry_no < PFS_MAX_CHILDREN; new_dentry_no++) {
 		pfs_dentry = PFS_dentry_from_dirblock(par_bh, new_dentry_no);
-		if (!pfs_dentry->active) break;
+		if (!pfs_dentry->active)
+			break;
 	}
 	if (new_dentry_no == PFS_MAX_CHILDREN) {
 		pr_err("Could not find a free dentry");
@@ -457,7 +464,7 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len, lo
 	else
 		amt_to_write = len;
 
-	if(copy_from_user(bh->b_data + *ppos, buf, amt_to_write)) {
+	if (copy_from_user(bh->b_data + *ppos, buf, amt_to_write)) {
 		pr_err("copy_from_user failed");
 		ret = -EFAULT;
 		goto write_release;
@@ -499,7 +506,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 	// store and cache
 	struct inode *dd_inode = NULL;
 	struct pantryfs_inode *dd_pfs_inode;
-	
+
 	sb = parent->i_sb;
 
 	/* check filename length */
@@ -516,15 +523,15 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 
 	// struct dentry *found_dentry;
 
-	// d_lookup(const struct dentry *parent, const struct qstr *name): 
+	// d_lookup(const struct dentry *parent, const struct qstr *name):
 	// - if the dentry is found its reference count is incremented and the dentry is returned.
 	// - NULL is returned if the dentry does not exist.
 	// https://elixir.bootlin.com/linux/v5.10.158/source/fs/dcache.c#L2328
 	// found_dentry = d_lookup(parent, child_dentry->d_name);
-	// if (found_dentry) {
-	// 	// store and return the dentry we just found
-	// 	d_add(child_dentry, found_dentry->d_inode);
-	// 	return found_dentry;
+    // // if (found_dentry) {
+    // //  // store and return the dentry we just found
+    //  d_add(child_dentry, found_dentry->d_inode);
+    //  return found_dentry;
 	// }
 
 	/* otherwise...*/
@@ -556,22 +563,22 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 			continue;
 
 		// if we found a match
-		if(!strncmp(pfs_dentry->filename, child_dentry->d_name.name, 
+		if (!strncmp(pfs_dentry->filename, child_dentry->d_name.name,
 				PANTRYFS_FILENAME_BUF_SIZE)) {
 			dir_dentry = pfs_dentry;
-			break;	
+			break;
 		}
 	}
 	// if no match was found
-	if (!dir_dentry) 
+	if (!dir_dentry)
 		goto lookup_release;
-	
+
 	// otherwise...
 
 	/* store and cache the entry we just found */
 
 	// get inode information
-	dd_pfs_inode = (struct pantryfs_inode *) 
+	dd_pfs_inode = (struct pantryfs_inode *)
 		(istore_bh->b_data + (dir_dentry->inode_no - 1) * sizeof(struct pantryfs_inode));
 
 	dd_inode = pfs_inode(sb, dir_dentry->inode_no, dd_pfs_inode);
@@ -580,7 +587,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry *child_dentry
 		ret = ERR_PTR(-ENOMEM);
 		goto lookup_release;
 	}
-	
+
 	// now finally add it
 	d_add(child_dentry, dd_inode);
 
@@ -589,7 +596,7 @@ lookup_release:
 lookup_end:
 	// Tal has a note on this but I don't quite understand it?
 	// if (ret != NULL) { // as of now this only happens on error
-	// 	return d_splice_alias(dd_inode, child_dentry);
+	//  return d_splice_alias(dd_inode, child_dentry);
 	// }
 	return ret;
 }
@@ -674,7 +681,7 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 		ret = -EIO;
 		goto fill_super_end;
 	}
-	
+
 	/* create VFS inode for root directory */
 
 	/* P3: read PantryFS root inode from disk and associate it with root_inode */

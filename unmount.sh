@@ -1,1 +1,1 @@
-sudo umount /mnt/pantry 
+sudo umount /mnt/pantry
