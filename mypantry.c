@@ -924,7 +924,81 @@ rmdir_release_2:
 
 int pantryfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *dentry)
 {
-	return -EPERM;
+	// basic
+	int ret = 0;
+	struct super_block *sb = dir->i_sb;
+	struct pantryfs_sb_buffer_heads buf_heads;
+	// for reading super block
+	struct pantryfs_super_block *pantry_sb;
+	// for opening parent data block
+	struct buffer_head *par_bh;
+	struct pantryfs_dir_entry *pfs_dentry;
+	struct inode *link_inode;
+
+	link_inode = old_dentry->d_inode;
+
+	/* 1. Open super block and tell it that a new file and inode have been created */
+	buf_heads.sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+	if (!buf_heads.sb_bh) {
+		pr_err("Could not read super block");
+		ret = -EIO;
+		goto link_end;
+	}
+
+	pantry_sb = (struct pantryfs_super_block *) buf_heads.sb_bh->b_data;
+
+	/* 1. Open inode block*/
+	buf_heads.i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!buf_heads.i_store_bh) {
+		pr_err("Could not read i store block");
+		ret = -EIO;
+		goto link_release;
+	}
+
+	/* 2. Open data block for parent and add dentry */
+	par_bh = sb_bread(sb, PFS_datablock_no_from_inode(buf_heads.i_store_bh, dir));
+	if (!par_bh) {
+		pr_err("Could not read parent dir datablock");
+		ret = -EIO;
+		goto link_release_2;
+	}
+
+	// 3. Get first empty dentry in dirblock
+	pfs_dentry = PFS_next_empty_dentry(par_bh);
+	if (pfs_dentry == NULL) {
+		pr_err("Could not find a free dentry");
+		goto link_release_3;
+	}
+
+	//Dont think i need these
+	// write sb - mark inode and datablock entries as used
+	// SETBIT(pantry_sb->free_inodes, new_ino_no); // do i need ?
+	// SETBIT(pantry_sb->free_data_blocks, new_db_no); // do i need ?
+	// mark_buffer_dirty(buf_heads.sb_bh);
+	// sync_dirty_buffer(buf_heads.sb_bh);
+	// write dentry
+
+	pfs_dentry->inode_no = link_inode->i_ino;
+	pfs_dentry->active = 1;
+	strncpy(pfs_dentry->filename, dentry->d_name.name, sizeof(pfs_dentry->filename));
+
+	mark_buffer_dirty(par_bh);
+	sync_dirty_buffer(par_bh);
+
+	inc_nlink(link_inode);
+	link_inode->i_ctime = dir->i_ctime = dir->i_mtime = current_time(dir);
+	d_instantiate(dentry, link_inode);
+
+	mark_inode_dirty(link_inode);
+
+link_release_3:
+	brelse(par_bh);
+link_release_2:
+	brelse(buf_heads.i_store_bh);
+link_release:
+	brelse(buf_heads.sb_bh);
+link_end:
+	return ret;
 }
 
 int pantryfs_symlink(struct inode *dir, struct dentry *dentry, const char *symname)
