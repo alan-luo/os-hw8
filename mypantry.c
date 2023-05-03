@@ -1081,7 +1081,7 @@ int pantryfs_symlink(struct inode *dir, struct dentry *dentry, const char *symna
 	pfs_new_inode->i_mtime = pfs_new_inode->i_atime;
 	pfs_new_inode->i_ctime = pfs_new_inode->i_atime;
 
-	pfs_new_inode->file_size = strlen(symname) + 1;
+	pfs_new_inode->file_size = strlen(symname);
 
 	mark_buffer_dirty(buf_heads.i_store_bh);
 	sync_dirty_buffer(buf_heads.i_store_bh);
@@ -1136,6 +1136,8 @@ const char *pantryfs_get_link(struct dentry *dentry, struct inode *inode, struct
  */
 void pantryfs_free_inode(struct inode *inode)
 {
+	if (S_ISLNK(inode->i_mode))
+		kfree(inode->i_link);
 	free_inode_nonrcu(inode);
 }
 
